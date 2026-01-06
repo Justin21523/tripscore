@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TripScore</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>TripScore</h1>
+        <p class="subtitle">Explainable, rule-based recommendations (MVP)</p>
+      </div>
+      <div class="toolbar">
+        <button id="run-btn" type="button" class="btn btn-primary" title="Ctrl+Enter">Run</button>
+        <label class="toggle" title="A">
+          <input id="auto-run" type="checkbox" />
+          Auto-run
+        </label>
+        <button id="reset-btn" type="button" class="btn" title="Ctrl+R">Reset</button>
+        <button id="save-preset-btn" type="button" class="btn" title="Ctrl+S">Save Preset</button>
+        <button id="delete-preset-btn" type="button" class="btn" title="Delete custom preset">
+          Delete Preset
+        </button>
+        <button id="help-btn" type="button" class="btn" title="?">Shortcuts</button>
+      </div>
+    </header>
+
+    <div class="statusbar">
+      <div class="statusbar-inner">
+        <span id="status" class="status">Ready.</span>
+      </div>
+    </div>
+
+    <main class="workspace">
+      <section class="panel panel-controls">
+        <div class="panel-header">
+          <h2>Control Panel</h2>
+          <div class="panel-header-actions">
+            <label class="toggle" title="M">
+              <input id="pick-origin" type="checkbox" />
+              Pick origin (map click)
+            </label>
+            <label class="toggle" title="K">
+              <input id="keyboard-controls" type="checkbox" checked />
+              Keyboard controls
+            </label>
+          </div>
+        </div>
+
+        <form id="query-form">
+          <details open>
+            <summary>Query</summary>
+            <div class="section-body">
+              <div class="row row-2">
+                <label>
+                  Preset
+                  <select id="preset">
+                    <option value="">Custom</option>
+                  </select>
+                </label>
+                <label>
+                  Preset description
+                  <input id="preset-description" type="text" value="Custom" disabled />
+                </label>
+              </div>
+
+              <div class="row">
+                <label>
+                  Origin lat
+                  <input id="origin-lat" type="number" step="0.000001" value="25.0478" required />
+                </label>
+                <label>
+                  Origin lon
+                  <input id="origin-lon" type="number" step="0.000001" value="121.5170" required />
+                </label>
+                <label>
+                  Move step (m)
+                  <select id="move-step">
+                    <option value="10">10</option>
+                    <option value="50" selected>50</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="row row-2">
+                <div class="dpad">
+                  <button id="move-n" type="button" class="btn btn-small" title="W / ↑">▲</button>
+                  <button id="move-w" type="button" class="btn btn-small" title="A / ←">◀</button>
+                  <button id="move-e" type="button" class="btn btn-small" title="D / →">▶</button>
+                  <button id="move-s" type="button" class="btn btn-small" title="S / ↓">▼</button>
+                </div>
+                <div class="rotate">
+                  <label>
+                    Heading (deg)
+                    <input id="heading-deg" type="number" min="0" max="359" step="1" value="0" />
+                  </label>
+                  <div class="rotate-buttons">
+                    <button id="rotate-left" type="button" class="btn btn-small" title="Q">⟲</button>
+                    <button id="rotate-right" type="button" class="btn btn-small" title="E">⟳</button>
+                    <button id="center-origin-btn" type="button" class="btn btn-small" title="C">
+                      Center map
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="row">
+                <label>
+                  Start (Asia/Taipei)
+                  <input id="start" type="datetime-local" required />
+                </label>
+                <label>
+                  End (Asia/Taipei)
+                  <input id="end" type="datetime-local" required />
+                </label>
+                <label>
+                  Quick window
+                  <select id="quick-window">
+                    <option value="">(none)</option>
+                    <option value="2">+2h</option>
+                    <option value="4" selected>+4h</option>
+                    <option value="8">+8h</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <details open>
+            <summary>Scoring Weights</summary>
+            <div class="section-body">
+              <div class="row">
+                <label>
+                  Accessibility (0..1)
+                  <input id="w-accessibility" type="number" step="0.05" min="0" max="1" value="0.35" />
+                </label>
+                <label>
+                  Weather (0..1)
+                  <input id="w-weather" type="number" step="0.05" min="0" max="1" value="0.3" />
+                </label>
+                <label>
+                  Preference (0..1)
+                  <input id="w-preference" type="number" step="0.05" min="0" max="1" value="0.2" />
+                </label>
+              </div>
+              <div class="row row-2">
+                <label>
+                  Context (0..1)
+                  <input id="w-context" type="number" step="0.05" min="0" max="1" value="0.15" />
+                </label>
+                <label>
+                  Top N
+                  <input id="top-n" type="number" min="1" max="20" value="10" />
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <details open>
+            <summary>Preferences</summary>
+            <div class="section-body">
+              <div class="row">
+                <label>
+                  Avoid rain importance (0..1)
+                  <input id="avoid-rain" type="number" step="0.05" min="0" max="1" value="0.7" />
+                </label>
+                <label>
+                  Avoid crowds importance (0..1)
+                  <input id="avoid-crowds" type="number" step="0.05" min="0" max="1" value="0.7" />
+                </label>
+                <label>
+                  Family-friendly importance (0..1)
+                  <input id="family-importance" type="number" step="0.05" min="0" max="1" value="0.3" />
+                </label>
+              </div>
+
+              <div class="row">
+                <label>Indoor <input id="tag-indoor" type="number" step="0.1" min="0" max="1" value="0.6" /></label>
+                <label>Outdoor <input id="tag-outdoor" type="number" step="0.1" min="0" max="1" value="0.4" /></label>
+                <label>Culture <input id="tag-culture" type="number" step="0.1" min="0" max="1" value="0.3" /></label>
+              </div>
+              <div class="row">
+                <label>Food <input id="tag-food" type="number" step="0.1" min="0" max="1" value="0.2" /></label>
+                <label>Family-friendly <input id="tag-family" type="number" step="0.1" min="0" max="1" value="0.4" /></label>
+                <label>Low crowd <input id="tag-crowd" type="number" step="0.1" min="0" max="1" value="0.4" /></label>
+              </div>
+
+              <div class="row row-2">
+                <label>
+                  Required tags (comma-separated)
+                  <input id="required-tags" type="text" placeholder="e.g., indoor, culture" />
+                </label>
+                <label>
+                  Excluded tags (comma-separated)
+                  <input id="excluded-tags" type="text" placeholder="e.g., outdoor" />
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <details>
+            <summary>Advanced Tuning (per request)</summary>
+            <div class="section-body" id="advanced-overrides">
+              <p class="hint">
+                These values override server defaults for this request only. (Backend validates and ignores unsafe keys.)
+              </p>
+              <label class="toggle">
+                <input id="enable-overrides" type="checkbox" />
+                Enable tuning overrides
+              </label>
+
+              <h4>Accessibility</h4>
+              <div class="row">
+                <label>Bus radius (m) <input id="acc-bus-radius" type="number" min="50" step="50" /></label>
+                <label>Bus count cap <input id="acc-bus-cap" type="number" min="0" step="1" /></label>
+                <label>Origin distance cap (m) <input id="acc-origin-cap" type="number" min="0" step="500" /></label>
+              </div>
+              <div class="row">
+                <label>Bus weight <input id="acc-w-bus" type="number" min="0" step="0.05" /></label>
+                <label>Metro weight <input id="acc-w-metro" type="number" min="0" step="0.05" /></label>
+                <label>Bike weight <input id="acc-w-bike" type="number" min="0" step="0.05" /></label>
+              </div>
+              <div class="row row-2">
+                <label>Blend: local transit <input id="acc-w-local" type="number" min="0" step="0.05" /></label>
+                <label>Blend: origin proximity <input id="acc-w-origin" type="number" min="0" step="0.05" /></label>
+              </div>
+
+              <h4>Weather</h4>
+              <div class="row">
+                <label>Comfort min (°C) <input id="wx-comfort-min" type="number" step="0.5" /></label>
+                <label>Comfort max (°C) <input id="wx-comfort-max" type="number" step="0.5" /></label>
+                <label>Temp penalty scale (°C) <input id="wx-temp-scale" type="number" step="0.5" /></label>
+              </div>
+              <div class="row row-2">
+                <label>Rain weight <input id="wx-w-rain" type="number" min="0" step="0.05" /></label>
+                <label>Temp weight <input id="wx-w-temp" type="number" min="0" step="0.05" /></label>
+              </div>
+              <div class="row row-2">
+                <label>Indoor rain multiplier <input id="wx-mult-indoor" type="number" step="0.05" /></label>
+                <label>Outdoor rain multiplier <input id="wx-mult-outdoor" type="number" step="0.05" /></label>
+              </div>
+
+              <h4>Context</h4>
+              <div class="row">
+                <label>Weekend multiplier <input id="ctx-weekend-mult" type="number" step="0.05" /></label>
+                <label>Parking risk weight <input id="ctx-parking-weight" type="number" min="0" max="1" step="0.05" /></label>
+                <label>Family tag bonus <input id="ctx-family-bonus" type="number" min="0" max="1" step="0.05" /></label>
+              </div>
+
+              <h4>Parking</h4>
+              <div class="row">
+                <label>Parking radius (m) <input id="park-radius" type="number" step="50" /></label>
+                <label>Lot cap <input id="park-lot-cap" type="number" step="1" /></label>
+                <label>Spaces cap <input id="park-spaces-cap" type="number" step="10" /></label>
+              </div>
+            </div>
+          </details>
+
+          <details>
+            <summary>Expert</summary>
+            <div class="section-body">
+              <p class="hint">
+                Optional: paste a JSON object for <code>settings_overrides</code> (same validation rules as Advanced
+                Tuning).
+              </p>
+              <label>
+                settings_overrides (JSON)
+                <textarea id="overrides-json" rows="6" spellcheck="false"></textarea>
+              </label>
+              <div class="row row-2">
+                <button id="load-defaults-btn" type="button" class="btn">Load server defaults</button>
+                <button id="copy-query-btn" type="button" class="btn">Copy request JSON</button>
+              </div>
+            </div>
+          </details>
+
+          <button id="submit" type="submit" class="btn btn-primary">Recommend</button>
+        </form>
+      </section>
+
+      <section class="panel panel-scene">
+        <div class="panel-header">
+          <h2>Scene</h2>
+          <div class="panel-header-actions">
+            <button id="clear-btn" type="button" class="btn btn-small" title="Clear markers">
+              Clear
+            </button>
+          </div>
+        </div>
+        <div id="map"></div>
+        <p class="hint">Map tiles require internet access. Drag the origin marker or enable “Pick origin”.</p>
+      </section>
+
+      <section class="panel panel-inspector">
+        <div class="panel-header">
+          <h2>Inspector</h2>
+          <div class="panel-header-actions">
+            <button id="copy-selected-btn" type="button" class="btn btn-small">Copy selected</button>
+          </div>
+        </div>
+        <div id="inspector" class="inspector">
+          <p class="hint">Select a result (or map marker) to inspect its full score breakdown.</p>
+        </div>
+
+        <div class="panel-header panel-header-secondary">
+          <h2>Results</h2>
+          <div class="panel-header-actions">
+            <input id="result-search" type="text" placeholder="Search results…" />
+          </div>
+        </div>
+        <ol id="results"></ol>
+      </section>
+    </main>
+
+    <dialog id="help-modal" class="modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-header">
+          <h2>Keyboard Shortcuts</h2>
+          <button class="btn btn-small" value="cancel" type="submit">Close</button>
+        </div>
+        <div class="modal-body">
+          <ul class="shortcut-list">
+            <li><kbd>Ctrl</kbd> + <kbd>Enter</kbd>: Run</li>
+            <li><kbd>A</kbd>: Toggle auto-run</li>
+            <li><kbd>M</kbd>: Toggle “Pick origin”</li>
+            <li><kbd>K</kbd>: Toggle keyboard controls</li>
+            <li><kbd>W</kbd>/<kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd> or arrows: Move origin (step in meters)</li>
+            <li><kbd>1</kbd>…<kbd>9</kbd>: Select result by rank</li>
+            <li><kbd>[</kbd>/<kbd>]</kbd>: Decrease/increase step</li>
+            <li><kbd>Q</kbd>/<kbd>E</kbd>: Rotate heading</li>
+            <li><kbd>C</kbd>: Center map on origin</li>
+            <li><kbd>?</kbd>: Open this help</li>
+          </ul>
+        </div>
+      </form>
+    </dialog>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
