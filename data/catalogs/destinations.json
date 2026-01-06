@@ -1,0 +1,243 @@
+[
+  {
+    "id": "taipei_101",
+    "name": "Taipei 101",
+    "location": { "lat": 25.033968, "lon": 121.564468 },
+    "tags": ["indoor", "food", "culture"],
+    "city": "Taipei",
+    "district": "Xinyi",
+    "url": "https://www.taipei-101.com.tw/"
+  },
+  {
+    "id": "cks_memorial_hall",
+    "name": "Chiang Kai-shek Memorial Hall",
+    "location": { "lat": 25.034507, "lon": 121.521121 },
+    "tags": ["outdoor", "culture", "family_friendly"],
+    "city": "Taipei",
+    "district": "Zhongzheng"
+  },
+  {
+    "id": "national_palace_museum",
+    "name": "National Palace Museum",
+    "location": { "lat": 25.102355, "lon": 121.548492 },
+    "tags": ["indoor", "culture", "family_friendly"],
+    "city": "Taipei",
+    "district": "Shilin"
+  },
+  {
+    "id": "shilin_night_market",
+    "name": "Shilin Night Market",
+    "location": { "lat": 25.088086, "lon": 121.525008 },
+    "tags": ["outdoor", "food", "culture"],
+    "city": "Taipei",
+    "district": "Shilin"
+  },
+  {
+    "id": "ximending",
+    "name": "Ximending",
+    "location": { "lat": 25.042233, "lon": 121.506506 },
+    "tags": ["outdoor", "food", "culture"],
+    "city": "Taipei",
+    "district": "Wanhua"
+  },
+  {
+    "id": "daan_forest_park",
+    "name": "Daan Forest Park",
+    "location": { "lat": 25.033419, "lon": 121.534995 },
+    "tags": ["outdoor", "family_friendly", "crowd_low"],
+    "city": "Taipei",
+    "district": "Da’an"
+  },
+  {
+    "id": "taipei_zoo",
+    "name": "Taipei Zoo",
+    "location": { "lat": 24.998472, "lon": 121.581121 },
+    "tags": ["outdoor", "family_friendly"],
+    "city": "Taipei",
+    "district": "Wenshan"
+  },
+  {
+    "id": "maokong_gondola",
+    "name": "Maokong Gondola",
+    "location": { "lat": 24.999558, "lon": 121.579396 },
+    "tags": ["outdoor", "culture", "family_friendly"],
+    "city": "Taipei",
+    "district": "Wenshan"
+  },
+  {
+    "id": "beitou_hot_spring_museum",
+    "name": "Beitou Hot Spring Museum",
+    "location": { "lat": 25.137416, "lon": 121.507347 },
+    "tags": ["indoor", "culture", "crowd_low"],
+    "city": "Taipei",
+    "district": "Beitou"
+  },
+  {
+    "id": "yangmingshan_np",
+    "name": "Yangmingshan National Park (Visitor Area)",
+    "location": { "lat": 25.155911, "lon": 121.548025 },
+    "tags": ["outdoor", "culture", "crowd_low"],
+    "city": "Taipei",
+    "district": "Beitou"
+  },
+  {
+    "id": "elephant_mountain",
+    "name": "Elephant Mountain (Xiangshan)",
+    "location": { "lat": 25.027459, "lon": 121.570727 },
+    "tags": ["outdoor", "culture"],
+    "city": "Taipei",
+    "district": "Xinyi"
+  },
+  {
+    "id": "huashan_1914",
+    "name": "Huashan 1914 Creative Park",
+    "location": { "lat": 25.044217, "lon": 121.529419 },
+    "tags": ["outdoor", "culture", "food"],
+    "city": "Taipei",
+    "district": "Zhongzheng"
+  },
+  {
+    "id": "songshan_cultural_park",
+    "name": "Songshan Cultural and Creative Park",
+    "location": { "lat": 25.043507, "lon": 121.560381 },
+    "tags": ["outdoor", "culture", "food"],
+    "city": "Taipei",
+    "district": "Xinyi"
+  },
+  {
+    "id": "longshan_temple",
+    "name": "Lungshan Temple",
+    "location": { "lat": 25.036826, "lon": 121.499793 },
+    "tags": ["indoor", "culture"],
+    "city": "Taipei",
+    "district": "Wanhua"
+  },
+  {
+    "id": "taipei_fine_arts_museum",
+    "name": "Taipei Fine Arts Museum",
+    "location": { "lat": 25.072489, "lon": 121.524787 },
+    "tags": ["indoor", "culture", "family_friendly"],
+    "city": "Taipei",
+    "district": "Zhongshan"
+  },
+  {
+    "id": "ningxia_night_market",
+    "name": "Ningxia Night Market",
+    "location": { "lat": 25.056392, "lon": 121.515285 },
+    "tags": ["outdoor", "food"],
+    "city": "Taipei",
+    "district": "Datong"
+  },
+  {
+    "id": "raohe_night_market",
+    "name": "Raohe Street Night Market",
+    "location": { "lat": 25.051333, "lon": 121.578575 },
+    "tags": ["outdoor", "food"],
+    "city": "Taipei",
+    "district": "Songshan"
+  },
+  {
+    "id": "xingtian_temple",
+    "name": "Xingtian Temple",
+    "location": { "lat": 25.063301, "lon": 121.533875 },
+    "tags": ["indoor", "culture", "crowd_low"],
+    "city": "Taipei",
+    "district": "Zhongshan"
+  },
+  {
+    "id": "miramar_entertainment_park",
+    "name": "Miramar Entertainment Park",
+    "location": { "lat": 25.083709, "lon": 121.557882 },
+    "tags": ["indoor", "food", "family_friendly"],
+    "city": "Taipei",
+    "district": "Zhongshan"
+  },
+  {
+    "id": "taipei_astronomical_museum",
+    "name": "Taipei Astronomical Museum",
+    "location": { "lat": 25.096782, "lon": 121.518923 },
+    "tags": ["indoor", "family_friendly", "culture"],
+    "city": "Taipei",
+    "district": "Shilin"
+  },
+  {
+    "id": "taipei_childrens_amusement_park",
+    "name": "Taipei Children's Amusement Park",
+    "location": { "lat": 25.096267, "lon": 121.514862 },
+    "tags": ["outdoor", "family_friendly"],
+    "city": "Taipei",
+    "district": "Shilin"
+  },
+  {
+    "id": "national_taiwan_museum",
+    "name": "National Taiwan Museum",
+    "location": { "lat": 25.042171, "lon": 121.515938 },
+    "tags": ["indoor", "culture", "family_friendly"],
+    "city": "Taipei",
+    "district": "Zhongzheng"
+  },
+  {
+    "id": "red_house_ximen",
+    "name": "The Red House (Ximen)",
+    "location": { "lat": 25.041969, "lon": 121.506250 },
+    "tags": ["indoor", "culture", "food"],
+    "city": "Taipei",
+    "district": "Wanhua"
+  },
+  {
+    "id": "beitou_thermal_valley",
+    "name": "Beitou Thermal Valley",
+    "location": { "lat": 25.139050, "lon": 121.512250 },
+    "tags": ["outdoor", "culture", "crowd_low"],
+    "city": "Taipei",
+    "district": "Beitou"
+  },
+  {
+    "id": "dalongdong_baoan_temple",
+    "name": "Dalongdong Baoan Temple",
+    "location": { "lat": 25.072506, "lon": 121.515821 },
+    "tags": ["indoor", "culture", "crowd_low"],
+    "city": "Taipei",
+    "district": "Datong"
+  },
+  {
+    "id": "taipei_expo_park",
+    "name": "Taipei Expo Park",
+    "location": { "lat": 25.070205, "lon": 121.522239 },
+    "tags": ["outdoor", "family_friendly", "crowd_low"],
+    "city": "Taipei",
+    "district": "Zhongshan"
+  },
+  {
+    "id": "shuanglian_market",
+    "name": "Shuanglian Market",
+    "location": { "lat": 25.057921, "lon": 121.520090 },
+    "tags": ["outdoor", "food", "crowd_low"],
+    "city": "Taipei",
+    "district": "Datong"
+  },
+  {
+    "id": "yongkang_street",
+    "name": "Yongkang Street",
+    "location": { "lat": 25.033238, "lon": 121.529958 },
+    "tags": ["outdoor", "food", "culture"],
+    "city": "Taipei",
+    "district": "Da’an"
+  },
+  {
+    "id": "lin_an_tai_historical_house",
+    "name": "Lin An Tai Historical House and Museum",
+    "location": { "lat": 25.070620, "lon": 121.526480 },
+    "tags": ["outdoor", "culture", "crowd_low", "family_friendly"],
+    "city": "Taipei",
+    "district": "Zhongshan"
+  },
+  {
+    "id": "taipei_confucius_temple",
+    "name": "Taipei Confucius Temple",
+    "location": { "lat": 25.073588, "lon": 121.515000 },
+    "tags": ["outdoor", "culture", "crowd_low"],
+    "city": "Taipei",
+    "district": "Datong"
+  }
+]

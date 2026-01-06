@@ -1,0 +1,12 @@
+[
+  { "city": "Taipei", "district": "Xinyi", "crowd_risk_base": 0.78, "family_friendliness_base": 0.62 },
+  { "city": "Taipei", "district": "Zhongzheng", "crowd_risk_base": 0.70, "family_friendliness_base": 0.60 },
+  { "city": "Taipei", "district": "Wanhua", "crowd_risk_base": 0.72, "family_friendliness_base": 0.55 },
+  { "city": "Taipei", "district": "Zhongshan", "crowd_risk_base": 0.68, "family_friendliness_base": 0.60 },
+  { "city": "Taipei", "district": "Datong", "crowd_risk_base": 0.66, "family_friendliness_base": 0.55 },
+  { "city": "Taipei", "district": "Songshan", "crowd_risk_base": 0.67, "family_friendliness_base": 0.60 },
+  { "city": "Taipei", "district": "Da’an", "crowd_risk_base": 0.62, "family_friendliness_base": 0.70 },
+  { "city": "Taipei", "district": "Shilin", "crowd_risk_base": 0.64, "family_friendliness_base": 0.75 },
+  { "city": "Taipei", "district": "Wenshan", "crowd_risk_base": 0.55, "family_friendliness_base": 0.72 },
+  { "city": "Taipei", "district": "Beitou", "crowd_risk_base": 0.58, "family_friendliness_base": 0.70 }
+]
