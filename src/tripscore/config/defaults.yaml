@@ -1,0 +1,196 @@
+app:
+  name: TripScore
+  timezone: Asia/Taipei
+  http_timeout_seconds: 15
+  log_level: INFO
+
+cache:
+  enabled: true
+  dir: .cache/tripscore
+  default_ttl_seconds: 86400
+
+catalog:
+  path: data/catalogs/destinations.json
+
+ingestion:
+  tdx:
+    base_url: https://tdx.transportdata.tw/api/basic/v2
+    token_url: https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token
+    city: Taipei
+    bus_stops:
+      top: 1000
+      select: StopUID,StopName,StopPosition
+    bike_stations:
+      top: 1000
+      select: StationUID,StationName,StationPosition
+    bike_availability:
+      top: 1000
+      select: StationUID,AvailableRentBikes,AvailableReturnBikes
+    metro_stations:
+      operators: [TRTC]
+      top: 1000
+      select: StationUID,StationName,StationPosition
+    parking_lots:
+      top: 1000
+      select: ParkingLotUID,ParkingLotName,ParkingLotPosition,TotalSpaces
+    parking_availability:
+      top: 1000
+      select: ParkingLotUID,AvailableSpaces,TotalSpaces
+    parking_availability_cache_ttl_seconds: 300
+    bike_availability_cache_ttl_seconds: 300
+    cache_ttl_seconds: 86400
+    accessibility:
+      radius_m: 500
+      count_cap: 20
+      distance_cap_m: 800
+      origin_distance_cap_m: 15000
+      local_score_weights:
+        count: 0.7
+        distance: 0.3
+      metro:
+        radius_m: 700
+        count_cap: 10
+        distance_cap_m: 900
+        score_weights:
+          count: 0.6
+          distance: 0.4
+      bike:
+        radius_m: 500
+        station_cap: 8
+        available_bikes_cap: 40
+        score_weights:
+          stations: 0.4
+          available_bikes: 0.6
+      local_transit_signal_weights:
+        bus: 0.55
+        metro: 0.3
+        bike: 0.15
+      blend_weights:
+        local_transit: 0.7
+        origin_proximity: 0.3
+
+  weather:
+    base_url: https://api.open-meteo.com/v1/forecast
+    timezone: Asia/Taipei
+    hourly_fields:
+      - temperature_2m
+      - precipitation_probability
+    cache_ttl_seconds: 3600
+    aggregation:
+      precipitation_probability: max
+      temperature_2m: mean
+    comfort_temperature_c:
+      min: 22
+      max: 28
+    temperature_penalty_scale_c: 10
+    score_weights:
+      rain: 0.7
+      temperature: 0.3
+
+features:
+  weather:
+    rain_importance_multiplier:
+      indoor: 0.7
+      outdoor: 1.2
+  parking:
+    radius_m: 800
+    lot_cap: 10
+    available_spaces_cap: 400
+    score_weights:
+      lots: 0.3
+      available_spaces: 0.7
+  preference_match:
+    tag_weights_default:
+      indoor: 0.6
+      outdoor: 0.4
+      culture: 0.3
+      food: 0.2
+      family_friendly: 0.4
+      crowd_low: 0.4
+  context:
+    district_factors_path: data/factors/district_factors.json
+    default_avoid_crowds_importance: 0.7
+    default_family_friendly_importance: 0.3
+    crowd:
+      default_risk: 0.5
+      weekend_multiplier: 1.15
+      parking_risk_weight: 0.35
+      peak_hours:
+        - start_hour: 12
+          end_hour: 14
+          multiplier: 1.10
+        - start_hour: 18
+          end_hour: 21
+          multiplier: 1.20
+      tag_risk_adjustments:
+        crowd_low: -0.25
+        food: 0.10
+        culture: 0.05
+        outdoor: 0.05
+    family:
+      default_score: 0.5
+      tag_bonus: 0.25
+
+scoring:
+  neutral_score: 0.5
+  composite_weights:
+    accessibility: 0.35
+    weather: 0.3
+    preference: 0.2
+    context: 0.15
+  top_n_default: 10
+
+presets:
+  rainy_day_indoor:
+    description: "Rainy-day friendly indoor culture/food"
+    component_weights:
+      accessibility: 0.30
+      weather: 0.40
+      preference: 0.20
+      context: 0.10
+    weather_rain_importance: 1.0
+    avoid_crowds_importance: 0.6
+    family_friendly_importance: 0.2
+    tag_weights:
+      indoor: 1.0
+      outdoor: 0.0
+      culture: 0.6
+      food: 0.5
+      family_friendly: 0.3
+      crowd_low: 0.6
+
+  family_half_day:
+    description: "Family-friendly, lower crowd risk"
+    component_weights:
+      accessibility: 0.35
+      weather: 0.25
+      preference: 0.20
+      context: 0.20
+    weather_rain_importance: 0.7
+    avoid_crowds_importance: 0.7
+    family_friendly_importance: 0.8
+    tag_weights:
+      family_friendly: 1.0
+      crowd_low: 0.7
+      indoor: 0.6
+      outdoor: 0.4
+      culture: 0.3
+      food: 0.2
+
+  explore_city:
+    description: "Balanced city exploration"
+    component_weights:
+      accessibility: 0.35
+      weather: 0.25
+      preference: 0.25
+      context: 0.15
+    weather_rain_importance: 0.6
+    avoid_crowds_importance: 0.5
+    family_friendly_importance: 0.3
+    tag_weights:
+      culture: 0.5
+      food: 0.4
+      crowd_low: 0.4
+      indoor: 0.6
+      outdoor: 0.4
+      family_friendly: 0.3
