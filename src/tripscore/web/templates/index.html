@@ -506,10 +506,10 @@
           <div class="debug-meta">
             <strong>TDX prefetch control</strong><br />
             <div class="row row-2" style="margin-top: 8px">
-              <label>
-                City
-                <input id="tdx-city" type="text" placeholder="e.g., Taipei" />
-              </label>
+	              <label>
+	                City
+	                <input id="tdx-city" type="text" placeholder="e.g., Taipei" list="tdx-cities" />
+	              </label>
               <label>
                 Pace (sleep seconds)
                 <input id="tdx-sleep" type="number" min="0" step="0.5" value="2" />
@@ -568,8 +568,9 @@
       </form>
     </dialog>
 
-    <datalist id="catalog-tags"></datalist>
-    <datalist id="catalog-locations"></datalist>
+	    <datalist id="catalog-tags"></datalist>
+	    <datalist id="catalog-locations"></datalist>
+	    <datalist id="tdx-cities"></datalist>
 
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"

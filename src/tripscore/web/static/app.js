@@ -1726,6 +1726,23 @@ async function loadCatalogMeta() {
   }
 }
 
+async function loadTdxCities() {
+  const list = el("tdx-cities");
+  if (!list) return;
+  try {
+    const data = await fetchJson("/api/tdx/cities");
+    const cities = (data && data.cities) || [];
+    list.innerHTML = "";
+    (cities || []).forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = String(c);
+      list.appendChild(opt);
+    });
+  } catch (_) {
+    // ignore
+  }
+}
+
 function loadTdxJobId() {
   try {
     state.tdxJobId = localStorage.getItem(STORAGE.tdxJobId);
@@ -2627,6 +2644,7 @@ function initDom() {
   await loadServerSettings();
   await loadServerPresets();
   await loadCatalogMeta();
+  await loadTdxCities();
   loadCustomPresets();
   rebuildPresetSelect();
 

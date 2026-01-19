@@ -30,6 +30,11 @@ from tripscore.recommender.recommend import recommend
 
 router = APIRouter()
 
+@router.get("/api/tdx/cities")
+def get_tdx_cities() -> dict:
+    """Return supported TDX city codes (used by tools and UI)."""
+    return {"cities": list(ALL_CITIES)}
+
 
 @lru_cache
 def _cache() -> FileCache:

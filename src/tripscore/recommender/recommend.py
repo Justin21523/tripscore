@@ -45,6 +45,7 @@ from tripscore.features.preference_match import score_preference_match  # Tag-ba
 from tripscore.features.weather import score_weather  # Weather suitability (rain + temperature).
 # Ingestion clients (fetch external data; may fail, so we handle errors gracefully).
 from tripscore.ingestion.tdx_client import TdxClient  # Transport Data eXchange (Taiwan) client for transit signals.
+from tripscore.ingestion.tdx_city_match import to_tdx_city
 from tripscore.ingestion.weather_client import WeatherClient, WeatherSummary  # Open-Meteo client + summary schema.
 # Scoring utilities (shared math helpers).
 from tripscore.scoring.composite import clamp01, normalize_weights  # Clamp and normalize for stable scoring.
@@ -252,44 +253,51 @@ def recommend(
     # ---- Step 10: Ingest external signals (fail-open, because external APIs can be unavailable) ----
     # We fetch once per request (not per destination) to keep network usage bounded.
     t_ingest = time.monotonic()
-    bus_stops = None
-    bike_stations = None
+    bus_stops_by_city: dict[str, list] = {}
+    bike_stations_by_city: dict[str, list] = {}
+    parking_lots_by_city: dict[str, list] = {}
     metro_stations = None
-    parking_lots = None
-    tdx_bus_error: str | None = None
-    tdx_bike_error: str | None = None
-    tdx_metro_error: str | None = None
-    tdx_parking_error: str | None = None
+    tdx_missing: dict[str, dict[str, bool]] = {}
+    cities: set[str] = set()
     weather_error_count = 0
-    try:
-        # Bus stops provide a "station density" proxy for accessibility around each destination.
-        bus_stops = tdx_client.get_bus_stops()
-    except Exception as e:
-        # We capture the error string so we can include it in the score details for transparency.
-        tdx_bus_error = str(e)
-        # Logging helps operators debug credential/network issues without breaking user flows.
-        logger.warning("TDX bus stop ingestion unavailable: %s", tdx_bus_error)
+    # Multi-city mode: do not make network calls during recommendation runs.
+    # We rely on the background daemon to prefetch bulk datasets into the cache.
+    for d in candidates:
+        c = to_tdx_city(getattr(d, "city", None))
+        if c:
+            cities.add(c)
+    if not cities:
+        cities.add(settings.ingestion.tdx.city)
+
+    for city in sorted(cities):
+        try:
+            bus = tdx_client.get_bus_stops_bulk(city=city)
+        except Exception:
+            bus = []
+        bus_stops_by_city[city] = bus
+
+        try:
+            bike = tdx_client.get_bike_stations_bulk(city=city)
+        except Exception:
+            bike = []
+        bike_stations_by_city[city] = bike
+
+        try:
+            park = tdx_client.get_parking_lots_bulk(city=city)
+        except Exception:
+            park = []
+        parking_lots_by_city[city] = park
+
+        tdx_missing[city] = {
+            "bus_stops": not bool(bus),
+            "bike_stations": not bool(bike),
+            "parking_lots": not bool(park),
+        }
 
     try:
-        # Bike station status provides a "last-mile" signal (availability matters, not just station count).
-        bike_stations = tdx_client.get_youbike_station_statuses()
-    except Exception as e:
-        tdx_bike_error = str(e)
-        logger.warning("TDX bike ingestion unavailable: %s", tdx_bike_error)
-
-    try:
-        # Metro stations provide an additional high-capacity transit signal.
-        metro_stations = tdx_client.get_metro_stations()
-    except Exception as e:
-        tdx_metro_error = str(e)
-        logger.warning("TDX metro ingestion unavailable: %s", tdx_metro_error)
-
-    try:
-        # Parking lots can act as a (very rough) congestion proxy: low availability may imply crowding.
-        parking_lots = tdx_client.get_parking_lot_statuses()
-    except Exception as e:
-        tdx_parking_error = str(e)
-        logger.warning("TDX parking ingestion unavailable: %s", tdx_parking_error)
+        metro_stations = tdx_client.get_metro_stations_bulk()
+    except Exception:
+        metro_stations = None
     timings_ms["ingest_tdx"] = int((time.monotonic() - t_ingest) * 1000)
 
     # ---- Step 11: Score every candidate destination (pure math + best-effort ingestion) ----
@@ -298,6 +306,11 @@ def recommend(
     t_weather = 0.0
     results: list[RecommendationItem] = []
     for dest in candidates:
+        dest_city = to_tdx_city(getattr(dest, "city", None)) or settings.ingestion.tdx.city
+        bus_stops = bus_stops_by_city.get(dest_city) or None
+        bike_stations = bike_stations_by_city.get(dest_city) or None
+        parking_lots = parking_lots_by_city.get(dest_city) or None
+
         # --- 11a) Accessibility scoring (origin proximity + local transit density) ---
         metrics = compute_accessibility_metrics(
             dest,
@@ -313,14 +326,14 @@ def recommend(
         a_score, a_details, a_reasons = score_accessibility(metrics, settings=settings)
         # Attach ingestion errors so the UI can explain why a score may look "neutral" or degraded.
         tdx_errors: dict[str, str] = {}
-        if not bus_stops and tdx_bus_error:
-            tdx_errors["bus_stops"] = tdx_bus_error
+        if not bus_stops:
+            tdx_errors["bus_stops"] = f"No bulk bus_stops data for city={dest_city} yet."
             a_reasons = [*a_reasons, "TDX bus stop data unavailable"]
-        if not bike_stations and tdx_bike_error:
-            tdx_errors["bike"] = tdx_bike_error
-            a_reasons = [*a_reasons, "TDX bike data unavailable"]
-        if not metro_stations and tdx_metro_error:
-            tdx_errors["metro"] = tdx_metro_error
+        if not bike_stations:
+            tdx_errors["bike"] = f"No bulk bike_stations data for city={dest_city} yet."
+            a_reasons = [*a_reasons, "TDX bike station data unavailable"]
+        if not metro_stations:
+            tdx_errors["metro"] = "No bulk metro station data yet."
             a_reasons = [*a_reasons, "TDX metro station data unavailable"]
         if tdx_errors:
             a_details = {**a_details, "tdx_errors": tdx_errors}
@@ -355,9 +368,8 @@ def recommend(
                 dest, lots=parking_lots, radius_m=settings.features.parking.radius_m
             )
             parking_score, parking_details, _ = score_parking_availability(p_metrics, settings=settings)
-        elif tdx_parking_error:
-            # Keep the error in details so the UI can explain why parking could not be used.
-            parking_details = {"error": tdx_parking_error}
+        else:
+            parking_details = {"error": f"No bulk parking_lots data for city={dest_city} (or unsupported)."}
 
         # --- 11e) Context scoring (crowd risk + family friendliness, optionally blended with parking) ---
         c_score, c_details, c_reasons = score_context(
@@ -418,6 +430,7 @@ def recommend(
         # We keep the full Destination payload so the UI can render name, tags, and map position.
         item_meta = {
             "data_completeness": {
+                "tdx_city": dest_city,
                 "tdx_bus_stops": bool(bus_stops),
                 "tdx_bike": bool(bike_stations),
                 "tdx_metro": bool(metro_stations),
@@ -437,36 +450,13 @@ def recommend(
     # Use server timezone for generated_at so timestamps are consistent across API and UI.
     generated_at = datetime.now(ZoneInfo(settings.app.timezone))
     warnings: list[dict[str, Any]] = []
-    if tdx_bus_error:
+    missing_cities = [c for c, v in tdx_missing.items() if any(bool(x) for x in (v or {}).values())]
+    if missing_cities:
         warnings.append(
             {
-                "code": "TDX_BUS_UNAVAILABLE",
-                "message": "TDX bus stop data unavailable",
-                "detail": tdx_bus_error,
-            }
-        )
-    if tdx_bike_error:
-        warnings.append(
-            {
-                "code": "TDX_BIKE_UNAVAILABLE",
-                "message": "TDX bike data unavailable",
-                "detail": tdx_bike_error,
-            }
-        )
-    if tdx_metro_error:
-        warnings.append(
-            {
-                "code": "TDX_METRO_UNAVAILABLE",
-                "message": "TDX metro station data unavailable",
-                "detail": tdx_metro_error,
-            }
-        )
-    if tdx_parking_error:
-        warnings.append(
-            {
-                "code": "TDX_PARKING_UNAVAILABLE",
-                "message": "TDX parking data unavailable",
-                "detail": tdx_parking_error,
+                "code": "TDX_BULK_PARTIAL",
+                "message": "Some TDX bulk datasets are missing or incomplete for selected cities.",
+                "detail": {"cities": sorted(missing_cities), "missing": tdx_missing},
             }
         )
     if weather_error_count:
@@ -481,11 +471,11 @@ def recommend(
     meta = {
         "data_sources": {
             "tdx": {
-                "city": settings.ingestion.tdx.city,
-                "bus_stops_count": len(bus_stops or []),
-                "bike_status_count": len(bike_stations or []),
+                "cities": sorted(list(cities)),
+                "bus_stops_count_by_city": {c: len(v or []) for c, v in bus_stops_by_city.items()},
+                "bike_stations_count_by_city": {c: len(v or []) for c, v in bike_stations_by_city.items()},
                 "metro_stations_count": len(metro_stations or []),
-                "parking_lots_count": len(parking_lots or []),
+                "parking_lots_count_by_city": {c: len(v or []) for c, v in parking_lots_by_city.items()},
             },
             "weather": {"failed_destination_count": int(weather_error_count)},
             "catalog": {"candidates_scored": len(candidates)},

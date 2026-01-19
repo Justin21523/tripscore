@@ -26,6 +26,7 @@ from tripscore.core.ingestion_meta import record_ingestion_source
 from tripscore.ingestion.tdx_bulk import (
     DatasetName,
     bulk_fetch_paged_odata,
+    bulk_is_unsupported,
     read_bulk_data,
     read_bulk_progress,
 )
@@ -481,6 +482,12 @@ class TdxClient:
         record_ingestion_source(source_name, {"mode": "none", "dataset": dataset, "scope": scope})
         return []
 
+    def _get_bulk_raw_list(self, *, dataset: DatasetName, scope: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Read bulk data/progress without performing any network calls."""
+        bulk_data = read_bulk_data(self._cache, dataset, scope)
+        bulk_progress = read_bulk_progress(self._cache, dataset, scope)
+        return (bulk_data if isinstance(bulk_data, list) else []), (bulk_progress if isinstance(bulk_progress, dict) else {})
+
     def _fetch_bus_stops_raw(self, city: str) -> list[dict[str, Any]]:
         base_url = self._settings.ingestion.tdx.base_url.rstrip("/")
         endpoint = f"{base_url}/Bus/Stop/City/{city}"
@@ -585,6 +592,31 @@ class TdxClient:
 
         if not stops:
             logger.warning("TDX returned 0 bus stops after parsing; continuing with empty list.")
+        return stops
+
+    def get_bus_stops_bulk(self, *, city: str | None = None) -> list[BusStop]:
+        """Return parsed bus stops from bulk cache only (no network)."""
+        city = city or self._settings.ingestion.tdx.city
+        scope = f"city_{city}"
+        raw, prog = self._get_bulk_raw_list(dataset="bus_stops", scope=scope)
+        done = bool((prog or {}).get("done", False))
+        record_ingestion_source(
+            f"tdx:bus_stops:{scope}",
+            {"mode": "bulk" if done else "bulk_partial" if raw else "none", "dataset": "bus_stops", "scope": scope, "done": done},
+        )
+
+        stops: list[BusStop] = []
+        for item in raw:
+            try:
+                pos = item.get("StopPosition") or {}
+                stop_uid = str(item.get("StopUID"))
+                stop_name = item.get("StopName", {}).get("Zh_tw") or item.get("StopName", {}).get("En")
+                lat = float(pos.get("PositionLat"))
+                lon = float(pos.get("PositionLon"))
+                if stop_uid and stop_name:
+                    stops.append(BusStop(stop_uid=stop_uid, name=str(stop_name), lat=lat, lon=lon))
+            except Exception:
+                continue
         return stops
 
     def get_bus_routes(self, *, city: str | None = None) -> list[BusRoute]:
@@ -964,6 +996,40 @@ class TdxClient:
             logger.warning("TDX returned 0 bike stations after parsing; continuing with empty list.")
         return stations
 
+    def get_bike_stations_bulk(self, *, city: str | None = None) -> list[BikeStationStatus]:
+        """Return bike station locations from bulk cache only (availability set to None)."""
+        city = city or self._settings.ingestion.tdx.city
+        scope = f"city_{city}"
+        raw, prog = self._get_bulk_raw_list(dataset="bike_stations", scope=scope)
+        done = bool((prog or {}).get("done", False))
+        record_ingestion_source(
+            f"tdx:bike_stations:{scope}",
+            {"mode": "bulk" if done else "bulk_partial" if raw else "none", "dataset": "bike_stations", "scope": scope, "done": done},
+        )
+        stations: list[BikeStationStatus] = []
+        for item in raw:
+            try:
+                pos = item.get("StationPosition") or {}
+                station_uid = str(item.get("StationUID"))
+                name = item.get("StationName", {}).get("Zh_tw") or item.get("StationName", {}).get("En")
+                lat = float(pos.get("PositionLat"))
+                lon = float(pos.get("PositionLon"))
+                if not station_uid or not name:
+                    continue
+                stations.append(
+                    BikeStationStatus(
+                        station_uid=station_uid,
+                        name=str(name),
+                        lat=lat,
+                        lon=lon,
+                        available_rent_bikes=None,
+                        available_return_bikes=None,
+                    )
+                )
+            except Exception:
+                continue
+        return stations
+
     def get_youbike_station_statuses_sample(
         self, *, city: str | None = None, top: int = 10
     ) -> list[BikeStationStatus]:
@@ -1089,6 +1155,42 @@ class TdxClient:
 
         if not stations:
             logger.warning("TDX returned 0 metro stations after parsing; continuing with empty list.")
+        return stations
+
+    def get_metro_stations_bulk(self, *, operators: list[str] | None = None) -> list[MetroStation]:
+        """Return metro stations from bulk cache only (no network)."""
+        operators = operators or self._settings.ingestion.tdx.metro_stations.operators
+        if not operators:
+            return []
+        stations: list[MetroStation] = []
+        for operator in operators:
+            scope = f"operator_{operator}"
+            raw, prog = self._get_bulk_raw_list(dataset="metro_stations", scope=scope)
+            done = bool((prog or {}).get("done", False))
+            record_ingestion_source(
+                f"tdx:metro_stations:{scope}",
+                {"mode": "bulk" if done else "bulk_partial" if raw else "none", "dataset": "metro_stations", "scope": scope, "done": done},
+            )
+            for item in raw:
+                try:
+                    pos = item.get("StationPosition") or {}
+                    station_uid = str(item.get("StationUID"))
+                    name = item.get("StationName", {}).get("Zh_tw") or item.get("StationName", {}).get("En")
+                    lat = float(pos.get("PositionLat"))
+                    lon = float(pos.get("PositionLon"))
+                    if not station_uid or not name:
+                        continue
+                    stations.append(
+                        MetroStation(
+                            station_uid=station_uid,
+                            name=str(name),
+                            lat=lat,
+                            lon=lon,
+                            operator=str(operator),
+                        )
+                    )
+                except Exception:
+                    continue
         return stations
 
     def get_metro_stations_sample(self, *, operator: str | None = None, top: int = 10) -> list[MetroStation]:
@@ -1272,6 +1374,79 @@ class TdxClient:
 
         if not lots:
             logger.warning("TDX returned 0 parking lots after parsing; continuing with empty list.")
+        return lots
+
+    def get_parking_lots_bulk(self, *, city: str | None = None) -> list[ParkingLotStatus]:
+        """Return parking lot locations from bulk cache only (no availability, no network)."""
+        city = city or self._settings.ingestion.tdx.city
+        scope = f"city_{city}"
+        if bulk_is_unsupported(self._cache, "parking_lots", scope):
+            record_ingestion_source(f"tdx:parking_lots:{scope}", {"mode": "unsupported", "dataset": "parking_lots", "scope": scope})
+            return []
+        raw, prog = self._get_bulk_raw_list(dataset="parking_lots", scope=scope)
+        done = bool((prog or {}).get("done", False))
+        record_ingestion_source(
+            f"tdx:parking_lots:{scope}",
+            {"mode": "bulk" if done else "bulk_partial" if raw else "none", "dataset": "parking_lots", "scope": scope, "done": done},
+        )
+        lots: list[ParkingLotStatus] = []
+        for item in raw:
+            try:
+                pos = item.get("ParkingLotPosition") or {}
+                lot_uid = str(item.get("ParkingLotUID"))
+                name = item.get("ParkingLotName", {}).get("Zh_tw") or item.get("ParkingLotName", {}).get("En")
+                lat = float(pos.get("PositionLat"))
+                lon = float(pos.get("PositionLon"))
+                if not lot_uid or not name:
+                    continue
+                total_spaces = item.get("TotalSpaces")
+                total_i = int(total_spaces) if isinstance(total_spaces, (int, float)) else None
+                lots.append(
+                    ParkingLotStatus(
+                        parking_lot_uid=lot_uid,
+                        name=str(name),
+                        lat=lat,
+                        lon=lon,
+                        available_spaces=None,
+                        total_spaces=total_i,
+                        address=(str(item.get("ParkingLotAddress") or item.get("Address") or "").strip() or None),
+                        service_time=(str(item.get("ServiceTime") or item.get("OpenTime") or "").strip() or None),
+                        fare_description=(str(item.get("FareDescription") or item.get("FareInfo") or "").strip() or None),
+                    )
+                )
+            except Exception:
+                continue
+
+        # Local enrichment (same as live method)
+        try:
+            import json
+
+            from tripscore.core.env import resolve_project_path
+
+            p = resolve_project_path("data/catalogs/parking_details.json")
+            if p.exists():
+                extra = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(extra, dict) and extra:
+                    updated: list[ParkingLotStatus] = []
+                    for lot in lots:
+                        e = extra.get(lot.parking_lot_uid) if isinstance(extra, dict) else None
+                        if not isinstance(e, dict):
+                            updated.append(lot)
+                            continue
+                        upd = {}
+                        if isinstance(e.get("address"), str) and e["address"].strip():
+                            upd["address"] = e["address"].strip()
+                        if isinstance(e.get("service_time"), str) and e["service_time"].strip():
+                            upd["service_time"] = e["service_time"].strip()
+                        if isinstance(e.get("fare_description"), str) and e["fare_description"].strip():
+                            upd["fare_description"] = e["fare_description"].strip()
+                        if isinstance(e.get("total_spaces"), int):
+                            upd["total_spaces"] = int(e["total_spaces"])
+                        updated.append(lot if not upd else lot.__class__(**{**lot.__dict__, **upd}))
+                    lots = updated
+        except Exception:
+            pass
+
         return lots
 
     def get_parking_lot_statuses_sample(
