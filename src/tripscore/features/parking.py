@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from tripscore.config.settings import Settings
 from tripscore.core.geo import GeoPoint as CoreGeoPoint
 from tripscore.core.geo import haversine_m
+from tripscore.core.spatial_index import SpatialGridIndex
 from tripscore.domain.models import Destination
 from tripscore.ingestion.tdx_client import ParkingLotStatus
 from tripscore.scoring.composite import clamp01, normalize_weights
@@ -34,7 +35,7 @@ class ParkingMetrics:
 
 
 def compute_parking_metrics(
-    destination: Destination, *, lots: list[ParkingLotStatus], radius_m: int
+    destination: Destination, *, lots: list[ParkingLotStatus], radius_m: int, lots_index: SpatialGridIndex[ParkingLotStatus] | None = None
 ) -> ParkingMetrics:
     """Compute parking metrics for a destination given a list of parking lots."""
     dest_pt = CoreGeoPoint(lat=destination.location.lat, lon=destination.location.lon)
@@ -47,7 +48,17 @@ def compute_parking_metrics(
     any_available = False
     any_total = False
 
-    for lot in lots:
+    candidates = lots
+    if lots_index is not None:
+        candidates = lots_index.query_within(
+            lat=destination.location.lat, lon=destination.location.lon, radius_m=float(radius_m)
+        )
+        nearest_m = lots_index.nearest_distance_m(
+            lat=destination.location.lat, lon=destination.location.lon, search_radius_m=max(6000.0, float(radius_m))
+        )
+        nearest = nearest_m
+
+    for lot in candidates:
         lot_pt = CoreGeoPoint(lat=lot.lat, lon=lot.lon)
         d = haversine_m(dest_pt, lot_pt)
         nearest = d if nearest is None else min(nearest, d)

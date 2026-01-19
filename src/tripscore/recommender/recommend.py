@@ -49,6 +49,7 @@ from tripscore.ingestion.tdx_city_match import to_tdx_city
 from tripscore.ingestion.weather_client import WeatherClient, WeatherSummary  # Open-Meteo client + summary schema.
 # Scoring utilities (shared math helpers).
 from tripscore.scoring.composite import clamp01, normalize_weights  # Clamp and normalize for stable scoring.
+from tripscore.core.spatial_index import SpatialGridIndex
 
 logger = logging.getLogger(__name__)  # Module-level logger (configured by app entrypoint).
 
@@ -300,6 +301,26 @@ def recommend(
         metro_stations = None
     timings_ms["ingest_tdx"] = int((time.monotonic() - t_ingest) * 1000)
 
+    # Build spatial indices once per city (huge speedup for large catalogs).
+    bus_index_by_city: dict[str, SpatialGridIndex] = {}
+    bike_index_by_city: dict[str, SpatialGridIndex] = {}
+    parking_index_by_city: dict[str, SpatialGridIndex] = {}
+    metro_index: SpatialGridIndex | None = None
+    try:
+        for city, items in bus_stops_by_city.items():
+            if items:
+                bus_index_by_city[city] = SpatialGridIndex(items, get_latlon=lambda s: (s.lat, s.lon))
+        for city, items in bike_stations_by_city.items():
+            if items:
+                bike_index_by_city[city] = SpatialGridIndex(items, get_latlon=lambda s: (s.lat, s.lon))
+        for city, items in parking_lots_by_city.items():
+            if items:
+                parking_index_by_city[city] = SpatialGridIndex(items, get_latlon=lambda s: (s.lat, s.lon))
+        if metro_stations:
+            metro_index = SpatialGridIndex(metro_stations, get_latlon=lambda s: (s.lat, s.lon))
+    except Exception:
+        pass
+
     # ---- Step 11: Score every candidate destination (pure math + best-effort ingestion) ----
     # Note: This loop may call the weather API per destination; caching is critical for speed.
     t_score = time.monotonic()
@@ -310,6 +331,9 @@ def recommend(
         bus_stops = bus_stops_by_city.get(dest_city) or None
         bike_stations = bike_stations_by_city.get(dest_city) or None
         parking_lots = parking_lots_by_city.get(dest_city) or None
+        bus_index = bus_index_by_city.get(dest_city)
+        bike_index = bike_index_by_city.get(dest_city)
+        parking_index = parking_index_by_city.get(dest_city)
 
         # --- 11a) Accessibility scoring (origin proximity + local transit density) ---
         metrics = compute_accessibility_metrics(
@@ -321,6 +345,9 @@ def recommend(
             bike_radius_m=settings.ingestion.tdx.accessibility.bike.radius_m,
             metro_stations=metro_stations,
             metro_radius_m=settings.ingestion.tdx.accessibility.metro.radius_m,
+            bus_index=bus_index,
+            bike_index=bike_index,
+            metro_index=metro_index,
         )
         # Convert raw accessibility metrics into a normalized 0..1 score + explainable details.
         a_score, a_details, a_reasons = score_accessibility(metrics, settings=settings)
@@ -365,7 +392,10 @@ def recommend(
         parking_details: dict | None = None
         if parking_lots:
             p_metrics = compute_parking_metrics(
-                dest, lots=parking_lots, radius_m=settings.features.parking.radius_m
+                dest,
+                lots=parking_lots,
+                radius_m=settings.features.parking.radius_m,
+                lots_index=parking_index,
             )
             parking_score, parking_details, _ = score_parking_availability(p_metrics, settings=settings)
         else:

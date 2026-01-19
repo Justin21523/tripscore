@@ -23,6 +23,7 @@ from tripscore.config.settings import Settings
 # We reuse the shared GeoPoint + distance function so all modules agree on distance math.
 from tripscore.core.geo import GeoPoint as CoreGeoPoint
 from tripscore.core.geo import haversine_m
+from tripscore.core.spatial_index import SpatialGridIndex
 # Domain models define what a destination and origin look like at the API boundary.
 from tripscore.domain.models import Destination, GeoPoint as DomainGeoPoint
 # These ingestion-layer dataclasses represent parsed TDX transport datasets.
@@ -57,6 +58,9 @@ def compute_accessibility_metrics(
     bike_radius_m: int,
     metro_stations: list[MetroStation] | None,
     metro_radius_m: int,
+    bus_index: SpatialGridIndex[BusStop] | None = None,
+    bike_index: SpatialGridIndex[BikeStationStatus] | None = None,
+    metro_index: SpatialGridIndex[MetroStation] | None = None,
 ) -> AccessibilityMetrics:
     """
     Compute raw, explainable accessibility metrics for a single destination.
@@ -79,7 +83,18 @@ def compute_accessibility_metrics(
     origin_distance_m = haversine_m(origin_pt, dest_pt)
 
     # --- Bus stop metrics (density + nearest stop distance) ---
-    if not bus_stops:
+    if bus_index is not None:
+        stops_near = bus_index.query_within(
+            lat=destination.location.lat, lon=destination.location.lon, radius_m=float(bus_radius_m)
+        )
+        nearest_m = bus_index.nearest_distance_m(
+            lat=destination.location.lat,
+            lon=destination.location.lon,
+            search_radius_m=max(3000.0, float(bus_radius_m)),
+        )
+        bus_within = len(stops_near)
+        bus_nearest_m = nearest_m if nearest_m is not None else float("inf")
+    elif not bus_stops:
         # `None` indicates ingestion is missing, so the scoring layer can "fail open" to neutral.
         bus_within = None
         bus_nearest_m = None
@@ -103,7 +118,37 @@ def compute_accessibility_metrics(
         bus_nearest_m = bus_nearest_m if bus_nearest_m is not None else float("inf")
 
     # --- YouBike metrics (station density + last-mile availability) ---
-    if not bike_stations:
+    if bike_index is not None:
+        stations_near = bike_index.query_within(
+            lat=destination.location.lat, lon=destination.location.lon, radius_m=float(bike_radius_m)
+        )
+        nearest_m = bike_index.nearest_distance_m(
+            lat=destination.location.lat,
+            lon=destination.location.lon,
+            search_radius_m=max(3000.0, float(bike_radius_m)),
+        )
+        bike_within = len(stations_near)
+        bike_nearest_m = nearest_m if nearest_m is not None else float("inf")
+
+        rent_sum = 0
+        return_sum = 0
+        any_rent = False
+        any_return = False
+        for station in stations_near:
+            if station.available_rent_bikes is not None:
+                rent_sum += int(station.available_rent_bikes)
+                any_rent = True
+            if station.available_return_bikes is not None:
+                return_sum += int(station.available_return_bikes)
+                any_return = True
+
+        if bike_within == 0:
+            bike_rent_total = 0
+            bike_return_total = 0
+        else:
+            bike_rent_total = rent_sum if any_rent else None
+            bike_return_total = return_sum if any_return else None
+    elif not bike_stations:
         # Missing YouBike ingestion -> downstream scoring will return a neutral bike score.
         bike_within = None
         bike_nearest_m = None
@@ -153,7 +198,18 @@ def compute_accessibility_metrics(
             bike_return_total = return_sum if any_return else None
 
     # --- Metro metrics (density + nearest station distance) ---
-    if not metro_stations:
+    if metro_index is not None:
+        metro_near = metro_index.query_within(
+            lat=destination.location.lat, lon=destination.location.lon, radius_m=float(metro_radius_m)
+        )
+        nearest_m = metro_index.nearest_distance_m(
+            lat=destination.location.lat,
+            lon=destination.location.lon,
+            search_radius_m=max(5000.0, float(metro_radius_m)),
+        )
+        metro_within = len(metro_near)
+        metro_nearest_m = nearest_m if nearest_m is not None else float("inf")
+    elif not metro_stations:
         # Missing metro ingestion -> downstream scoring will return a neutral metro score.
         metro_within = None
         metro_nearest_m = None
