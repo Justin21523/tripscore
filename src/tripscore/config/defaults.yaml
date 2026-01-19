@@ -40,7 +40,7 @@ ingestion:
       top: 1000
       select: StationUID,AvailableRentBikes,AvailableReturnBikes
     metro_stations:
-      operators: [TRTC]
+      operators: [TRTC, KRTC, TYMC, TMRT]
       top: 1000
       select: StationUID,StationName,StationPosition
     parking_lots:
