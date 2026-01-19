@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tripscore.config.settings import get_settings
+from tripscore.core.rate_limit import TokenBucketRateLimiter
 from tripscore.ingestion.tdx_cities import ALL_CITIES
 from tripscore.ingestion.tdx_bulk import DatasetName, bulk_is_unsupported, bulk_prefetch_all, read_bulk_progress
 from tripscore.ingestion.tdx_client import TdxClient
@@ -52,6 +53,7 @@ class _DaemonState:
     city_last_dynamic_unix: dict[str, int] | None = None
     city_last_static_refresh_unix: dict[str, int] | None = None
     city_cooldown_until_unix: dict[str, int] | None = None
+    global_cooldown_until_unix: int = 0
     consecutive_429: int = 0
 
     @classmethod
@@ -77,6 +79,7 @@ class _DaemonState:
             city_last_dynamic_unix=dict(payload.get("city_last_dynamic_unix") or {}),
             city_last_static_refresh_unix=dict(payload.get("city_last_static_refresh_unix") or {}),
             city_cooldown_until_unix=dict(payload.get("city_cooldown_until_unix") or {}),
+            global_cooldown_until_unix=int(payload.get("global_cooldown_until_unix") or 0),
             consecutive_429=int(payload.get("consecutive_429") or 0),
         )
 
@@ -88,6 +91,7 @@ class _DaemonState:
             "city_last_dynamic_unix": self.city_last_dynamic_unix or {},
             "city_last_static_refresh_unix": self.city_last_static_refresh_unix or {},
             "city_cooldown_until_unix": self.city_cooldown_until_unix or {},
+            "global_cooldown_until_unix": int(self.global_cooldown_until_unix or 0),
             "consecutive_429": int(self.consecutive_429),
         }
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -165,6 +169,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Periodically reset and re-download static bulk datasets (days).",
     )
     p.add_argument(
+        "--global-max-rpm",
+        type=float,
+        default=0.0,
+        help="Global max requests per minute via token bucket (0 to disable).",
+    )
+    p.add_argument(
+        "--global-cooldown-seconds",
+        type=float,
+        default=0.0,
+        help="Global cooldown after 429 bursts (seconds).",
+    )
+    p.add_argument(
         "--state-path",
         type=str,
         default=".cache/tripscore/tdx_daemon/state.json",
@@ -198,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
         settings = settings.model_copy(update={"ingestion": ingestion})
     cache = build_cache(settings)
     tdx = TdxClient(settings, cache)
+    if float(args.global_max_rpm) > 0:
+        tdx.set_rate_limiter(TokenBucketRateLimiter(max_per_minute=float(args.global_max_rpm)))
     operators = list(settings.ingestion.tdx.metro_stations.operators)
     cities = _parse_cities(str(args.cities))
     cache_dir = resolve_project_path(settings.cache.dir)
@@ -219,10 +237,17 @@ def main(argv: list[str] | None = None) -> int:
     print("dynamic_interval_seconds:", float(args.dynamic_interval_seconds))
     print("cooldown_seconds:", float(args.cooldown_seconds))
     print("static_refresh_days:", float(args.static_refresh_days))
+    print("global_max_rpm:", float(args.global_max_rpm))
+    print("global_cooldown_seconds:", float(args.global_cooldown_seconds))
     print("state_path:", state_path)
 
     while True:
         now = int(time.time())
+
+        global_cd = int(state.global_cooldown_until_unix or 0)
+        if global_cd and now < global_cd:
+            time.sleep(max(1.0, float(args.sleep_seconds)))
+            continue
 
         # Periodic static refresh: reset bulk files to re-download slowly (e.g. monthly).
         refresh_days = float(args.static_refresh_days)
@@ -266,6 +291,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             if _looks_like_429(e):
                 state.consecutive_429 += 1
+                gcd = int(float(args.global_cooldown_seconds))
+                if gcd > 0:
+                    jitter = random.randint(0, max(30, gcd // 10))
+                    state.global_cooldown_until_unix = int(time.time()) + gcd + jitter
                 # Escalate cooldown for this city when 429 keeps happening.
                 if state.consecutive_429 >= 2:
                     cd = int(float(args.cooldown_seconds))
@@ -294,6 +323,10 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception as e:
                     if _looks_like_429(e):
                         state.consecutive_429 += 1
+                        gcd = int(float(args.global_cooldown_seconds))
+                        if gcd > 0:
+                            jitter = random.randint(0, max(30, gcd // 10))
+                            state.global_cooldown_until_unix = int(time.time()) + gcd + jitter
                         cd = int(float(args.cooldown_seconds))
                         jitter = random.randint(0, max(30, cd // 10))
                         state.city_cooldown_until_unix[city] = int(time.time()) + cd + jitter

@@ -110,6 +110,14 @@ class TdxClient:
         self._access_token: str | None = None
         self._token_expires_at_unix: int = 0
         self._last_request_monotonic: float | None = None
+        self._rate_limiter = None
+
+    def set_rate_limiter(self, limiter) -> None:
+        """Attach a best-effort rate limiter.
+
+        The limiter is expected to implement `acquire()`; it may be None to disable.
+        """
+        self._rate_limiter = limiter
 
     @staticmethod
     def _parse_retry_after_seconds(value: str | None) -> float | None:
@@ -194,6 +202,11 @@ class TdxClient:
             headers = {"Authorization": f"Bearer {token}"}
 
             try:
+                if self._rate_limiter is not None:
+                    try:
+                        self._rate_limiter.acquire(1.0)
+                    except Exception:
+                        pass
                 self._throttle_requests()
                 return get_json(
                     url,
