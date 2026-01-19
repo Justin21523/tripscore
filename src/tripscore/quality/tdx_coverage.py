@@ -152,6 +152,15 @@ def build_tdx_bulk_coverage(settings: Settings) -> dict[str, Any]:
         "summary": {
             "by_dataset": {k: dict(v) for k, v in sorted(by_dataset.items())},
             "by_city": {k: dict(v) for k, v in sorted(by_city.items())},
+            "kpi": {
+                "total_rows": len(rows),
+                "done_rows": sum(1 for r in rows if classify(r) == "done"),
+                "unsupported_rows": sum(1 for r in rows if classify(r) == "unsupported"),
+                "incomplete_rows": sum(1 for r in rows if classify(r) == "incomplete"),
+                "missing_rows": sum(1 for r in rows if classify(r) == "missing"),
+                "error_429_rows": sum(1 for r in rows if classify(r) == "error_429"),
+                "error_other_rows": sum(1 for r in rows if classify(r) == "error_other"),
+            },
         },
         "samples": {
             "incomplete": [r.as_dict() for r in incomplete[:30]],
@@ -161,4 +170,3 @@ def build_tdx_bulk_coverage(settings: Settings) -> dict[str, Any]:
         },
         "rows": [r.as_dict() for r in rows],
     }
-
