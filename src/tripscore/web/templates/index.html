@@ -16,7 +16,7 @@
     <header class="topbar">
       <div class="brand">
         <h1>TripScore</h1>
-        <p class="subtitle">Explainable, rule-based recommendations (MVP)</p>
+        <p class="subtitle">Explainable, rule-based destination recommendations</p>
       </div>
       <div class="toolbar">
         <button id="run-btn" type="button" class="btn btn-primary" title="Ctrl+Enter">Run</button>
@@ -55,10 +55,49 @@
           </div>
         </div>
 
+        <div class="brief-strip" id="brief-strip">
+          <div class="brief-title">Brief</div>
+          <div class="brief-items">
+            <span id="brief-when" class="brief-item">When: —</span>
+            <span id="brief-from" class="brief-item">From: —</span>
+            <span id="brief-goal" class="brief-item">Goal: —</span>
+            <span id="brief-topn" class="brief-item">Top N: —</span>
+            <span id="brief-data" class="brief-item">Data: —</span>
+            <span id="brief-cache" class="brief-item">Cache: —</span>
+            <span id="brief-updated" class="brief-item">Updated: —</span>
+          </div>
+        </div>
+
+        <div class="stepper" role="tablist" aria-label="Guided setup steps">
+          <button class="step-tab active" type="button" data-step="step-1" aria-selected="true">
+            <span class="step-num">1</span> Trip
+          </button>
+          <button class="step-tab" type="button" data-step="step-2" aria-selected="false">
+            <span class="step-num">2</span> Priorities
+          </button>
+          <button class="step-tab" type="button" data-step="step-3" aria-selected="false">
+            <span class="step-num">3</span> Preferences
+          </button>
+          <button class="step-tab" type="button" data-step="step-4" aria-selected="false">
+            <span class="step-num">4</span> Advanced
+          </button>
+        </div>
+
         <form id="query-form">
-          <details open>
-            <summary>Query</summary>
-            <div class="section-body">
+          <section id="step-1" class="step-section active" role="tabpanel" aria-label="Step 1: Trip">
+            <div class="step-header">
+              <div>
+                <div class="step-title">Step 1 — Trip</div>
+                <div class="step-subtitle">Set the time window and origin. Use the map or keyboard shortcuts.</div>
+              </div>
+              <div class="step-actions">
+                <button type="button" class="btn btn-small" data-next-step="step-2">Next</button>
+              </div>
+            </div>
+
+            <details open>
+              <summary>Query</summary>
+              <div class="section-body">
               <div class="row row-2">
                 <label>
                   Preset
@@ -133,84 +172,182 @@
                   </select>
                 </label>
               </div>
-            </div>
-          </details>
+              </div>
+            </details>
+          </section>
 
-          <details open>
-            <summary>Scoring Weights</summary>
-            <div class="section-body">
+          <section id="step-2" class="step-section" role="tabpanel" aria-label="Step 2: Priorities">
+            <div class="step-header">
+              <div>
+                <div class="step-title">Step 2 — Priorities</div>
+                <div class="step-subtitle">Tune how the system balances accessibility, weather, and preferences.</div>
+              </div>
+              <div class="step-actions">
+                <button id="mode-balanced" type="button" class="btn btn-small">Balanced</button>
+                <button id="mode-rainy" type="button" class="btn btn-small">Rainy day</button>
+                <button id="mode-family" type="button" class="btn btn-small">Family</button>
+                <button type="button" class="btn btn-small" data-prev-step="step-1">Back</button>
+                <button type="button" class="btn btn-small" data-next-step="step-3">Next</button>
+              </div>
+            </div>
+
+            <details open>
+              <summary>Scoring Weights</summary>
+              <div class="section-body">
               <div class="row">
                 <label>
-                  Accessibility (0..1)
-                  <input id="w-accessibility" type="number" step="0.05" min="0" max="1" value="0.35" />
+                  Accessibility
+                  <div class="slider">
+                    <input id="w-accessibility" type="range" min="0" max="1" step="0.05" value="0.35" />
+                    <div class="slider-meta"><span id="w-accessibility-label">—</span><span id="w-accessibility-value">0.35</span></div>
+                  </div>
                 </label>
                 <label>
-                  Weather (0..1)
-                  <input id="w-weather" type="number" step="0.05" min="0" max="1" value="0.3" />
+                  Weather
+                  <div class="slider">
+                    <input id="w-weather" type="range" min="0" max="1" step="0.05" value="0.3" />
+                    <div class="slider-meta"><span id="w-weather-label">—</span><span id="w-weather-value">0.30</span></div>
+                  </div>
                 </label>
                 <label>
-                  Preference (0..1)
-                  <input id="w-preference" type="number" step="0.05" min="0" max="1" value="0.2" />
+                  Preferences
+                  <div class="slider">
+                    <input id="w-preference" type="range" min="0" max="1" step="0.05" value="0.2" />
+                    <div class="slider-meta"><span id="w-preference-label">—</span><span id="w-preference-value">0.20</span></div>
+                  </div>
                 </label>
               </div>
               <div class="row row-2">
                 <label>
-                  Context (0..1)
-                  <input id="w-context" type="number" step="0.05" min="0" max="1" value="0.15" />
+                  Context
+                  <div class="slider">
+                    <input id="w-context" type="range" min="0" max="1" step="0.05" value="0.15" />
+                    <div class="slider-meta"><span id="w-context-label">—</span><span id="w-context-value">0.15</span></div>
+                  </div>
                 </label>
                 <label>
                   Top N
                   <input id="top-n" type="number" min="1" max="20" value="10" />
                 </label>
               </div>
+              </div>
+            </details>
+          </section>
+
+          <section id="step-3" class="step-section" role="tabpanel" aria-label="Step 3: Preferences">
+            <div class="step-header">
+              <div>
+                <div class="step-title">Step 3 — Preferences</div>
+                <div class="step-subtitle">Express what you care about: indoor/outdoor, culture, food, crowds.</div>
+              </div>
+              <div class="step-actions">
+                <button type="button" class="btn btn-small" data-prev-step="step-2">Back</button>
+                <button type="button" class="btn btn-small" data-next-step="step-4">Next</button>
+              </div>
             </div>
-          </details>
 
-          <details open>
-            <summary>Preferences</summary>
-            <div class="section-body">
+            <details open>
+              <summary>Preferences</summary>
+              <div class="section-body">
               <div class="row">
                 <label>
-                  Avoid rain importance (0..1)
-                  <input id="avoid-rain" type="number" step="0.05" min="0" max="1" value="0.7" />
+                  Avoid rain
+                  <div class="slider">
+                    <input id="avoid-rain" type="range" min="0" max="1" step="0.05" value="0.7" />
+                    <div class="slider-meta"><span id="avoid-rain-label">—</span><span id="avoid-rain-value">0.70</span></div>
+                  </div>
                 </label>
                 <label>
-                  Avoid crowds importance (0..1)
-                  <input id="avoid-crowds" type="number" step="0.05" min="0" max="1" value="0.7" />
+                  Avoid crowds
+                  <div class="slider">
+                    <input id="avoid-crowds" type="range" min="0" max="1" step="0.05" value="0.7" />
+                    <div class="slider-meta"><span id="avoid-crowds-label">—</span><span id="avoid-crowds-value">0.70</span></div>
+                  </div>
                 </label>
                 <label>
-                  Family-friendly importance (0..1)
-                  <input id="family-importance" type="number" step="0.05" min="0" max="1" value="0.3" />
+                  Family-friendly
+                  <div class="slider">
+                    <input id="family-importance" type="range" min="0" max="1" step="0.05" value="0.3" />
+                    <div class="slider-meta"><span id="family-importance-label">—</span><span id="family-importance-value">0.30</span></div>
+                  </div>
                 </label>
               </div>
 
               <div class="row">
-                <label>Indoor <input id="tag-indoor" type="number" step="0.1" min="0" max="1" value="0.6" /></label>
-                <label>Outdoor <input id="tag-outdoor" type="number" step="0.1" min="0" max="1" value="0.4" /></label>
-                <label>Culture <input id="tag-culture" type="number" step="0.1" min="0" max="1" value="0.3" /></label>
+                <label>
+                  Indoor
+                  <div class="slider">
+                    <input id="tag-indoor" type="range" min="0" max="1" step="0.05" value="0.6" />
+                    <div class="slider-meta"><span id="tag-indoor-label">—</span><span id="tag-indoor-value">0.60</span></div>
+                  </div>
+                </label>
+                <label>
+                  Outdoor
+                  <div class="slider">
+                    <input id="tag-outdoor" type="range" min="0" max="1" step="0.05" value="0.4" />
+                    <div class="slider-meta"><span id="tag-outdoor-label">—</span><span id="tag-outdoor-value">0.40</span></div>
+                  </div>
+                </label>
+                <label>
+                  Culture
+                  <div class="slider">
+                    <input id="tag-culture" type="range" min="0" max="1" step="0.05" value="0.3" />
+                    <div class="slider-meta"><span id="tag-culture-label">—</span><span id="tag-culture-value">0.30</span></div>
+                  </div>
+                </label>
               </div>
               <div class="row">
-                <label>Food <input id="tag-food" type="number" step="0.1" min="0" max="1" value="0.2" /></label>
-                <label>Family-friendly <input id="tag-family" type="number" step="0.1" min="0" max="1" value="0.4" /></label>
-                <label>Low crowd <input id="tag-crowd" type="number" step="0.1" min="0" max="1" value="0.4" /></label>
+                <label>
+                  Food
+                  <div class="slider">
+                    <input id="tag-food" type="range" min="0" max="1" step="0.05" value="0.2" />
+                    <div class="slider-meta"><span id="tag-food-label">—</span><span id="tag-food-value">0.20</span></div>
+                  </div>
+                </label>
+                <label>
+                  Family-friendly
+                  <div class="slider">
+                    <input id="tag-family" type="range" min="0" max="1" step="0.05" value="0.4" />
+                    <div class="slider-meta"><span id="tag-family-label">—</span><span id="tag-family-value">0.40</span></div>
+                  </div>
+                </label>
+                <label>
+                  Low crowd
+                  <div class="slider">
+                    <input id="tag-crowd" type="range" min="0" max="1" step="0.05" value="0.4" />
+                    <div class="slider-meta"><span id="tag-crowd-label">—</span><span id="tag-crowd-value">0.40</span></div>
+                  </div>
+                </label>
               </div>
 
               <div class="row row-2">
                 <label>
                   Required tags (comma-separated)
-                  <input id="required-tags" type="text" placeholder="e.g., indoor, culture" />
+                  <input id="required-tags" type="text" placeholder="e.g., indoor, culture" list="catalog-tags" />
                 </label>
                 <label>
                   Excluded tags (comma-separated)
-                  <input id="excluded-tags" type="text" placeholder="e.g., outdoor" />
+                  <input id="excluded-tags" type="text" placeholder="e.g., outdoor" list="catalog-tags" />
                 </label>
               </div>
-            </div>
-          </details>
+              </div>
+            </details>
+          </section>
 
-          <details>
-            <summary>Advanced Tuning (per request)</summary>
-            <div class="section-body" id="advanced-overrides">
+          <section id="step-4" class="step-section" role="tabpanel" aria-label="Step 4: Advanced">
+            <div class="step-header">
+              <div>
+                <div class="step-title">Step 4 — Advanced</div>
+                <div class="step-subtitle">Optional knobs for calibration and debugging. Safe defaults are fine.</div>
+              </div>
+              <div class="step-actions">
+                <button type="button" class="btn btn-small" data-prev-step="step-3">Back</button>
+              </div>
+            </div>
+
+            <details>
+              <summary>Advanced Tuning (per request)</summary>
+              <div class="section-body" id="advanced-overrides">
               <p class="hint">
                 These values override server defaults for this request only. (Backend validates and ignores unsafe keys.)
               </p>
@@ -263,12 +400,12 @@
                 <label>Lot cap <input id="park-lot-cap" type="number" step="1" /></label>
                 <label>Spaces cap <input id="park-spaces-cap" type="number" step="10" /></label>
               </div>
-            </div>
-          </details>
+              </div>
+            </details>
 
-          <details>
-            <summary>Expert</summary>
-            <div class="section-body">
+            <details>
+              <summary>Expert</summary>
+              <div class="section-body">
               <p class="hint">
                 Optional: paste a JSON object for <code>settings_overrides</code> (same validation rules as Advanced
                 Tuning).
@@ -281,8 +418,9 @@
                 <button id="load-defaults-btn" type="button" class="btn">Load server defaults</button>
                 <button id="copy-query-btn" type="button" class="btn">Copy request JSON</button>
               </div>
-            </div>
-          </details>
+              </div>
+            </details>
+          </section>
 
           <button id="submit" type="submit" class="btn btn-primary">Recommend</button>
         </form>
@@ -295,6 +433,13 @@
             <button id="clear-btn" type="button" class="btn btn-small" title="Clear markers">
               Clear
             </button>
+            <button id="fit-btn" type="button" class="btn btn-small" title="Fit map to results">
+              Fit
+            </button>
+            <label class="toggle" title="Show lines from origin">
+              <input id="show-lines" type="checkbox" />
+              Lines
+            </label>
           </div>
         </div>
         <div id="map"></div>
@@ -303,22 +448,91 @@
 
       <section class="panel panel-inspector">
         <div class="panel-header">
-          <h2>Inspector</h2>
+          <h2>Results</h2>
           <div class="panel-header-actions">
             <button id="copy-selected-btn" type="button" class="btn btn-small">Copy selected</button>
           </div>
         </div>
-        <div id="inspector" class="inspector">
-          <p class="hint">Select a result (or map marker) to inspect its full score breakdown.</p>
+
+        <div class="tabs" role="tablist" aria-label="Results panel">
+          <button id="tab-results" class="tab active" type="button" role="tab" aria-selected="true">List</button>
+          <button id="tab-details" class="tab" type="button" role="tab" aria-selected="false">Brief</button>
+          <button id="tab-debug" class="tab" type="button" role="tab" aria-selected="false">Data</button>
         </div>
 
-        <div class="panel-header panel-header-secondary">
-          <h2>Results</h2>
-          <div class="panel-header-actions">
+        <div id="panel-results" class="tab-panel active" role="tabpanel" aria-labelledby="tab-results">
+          <div class="panel-subheader">
             <input id="result-search" type="text" placeholder="Search results…" />
+            <select id="result-sort" title="Sort">
+              <option value="rank" selected>Rank</option>
+              <option value="score_desc">Score (desc)</option>
+              <option value="score_asc">Score (asc)</option>
+              <option value="name_asc">Name (A→Z)</option>
+            </select>
+          </div>
+          <div class="panel-subheader">
+            <input id="result-tags" type="text" placeholder="Filter tags (comma-separated)…" list="catalog-tags" />
+            <input id="result-location" type="text" placeholder="Filter city/district…" list="catalog-locations" />
+          </div>
+          <div class="panel-subheader">
+            <label class="inline-field">
+              Min score
+              <input id="result-min-score" type="number" min="0" max="1" step="0.05" value="0" />
+            </label>
+            <div id="result-count" class="muted-inline"></div>
+          </div>
+          <ol id="results" class="result-list"></ol>
+          <p class="hint">Tip: press <kbd>1</kbd>…<kbd>9</kbd> to select by rank.</p>
+        </div>
+
+        <div id="panel-details" class="tab-panel" role="tabpanel" aria-labelledby="tab-details">
+          <div id="inspector" class="inspector">
+            <p class="hint">Select a result (or map marker) to inspect its score breakdown.</p>
           </div>
         </div>
-        <ol id="results"></ol>
+
+        <div id="panel-debug" class="tab-panel" role="tabpanel" aria-labelledby="tab-debug">
+          <div id="debug-meta" class="debug-meta"></div>
+          <div id="debug-tdx" class="debug-meta"></div>
+          <div class="debug-meta">
+            <strong>TDX prefetch control</strong><br />
+            <div class="row row-2" style="margin-top: 8px">
+              <label>
+                City
+                <input id="tdx-city" type="text" placeholder="e.g., Taipei" />
+              </label>
+              <label>
+                Pace (sleep seconds)
+                <input id="tdx-sleep" type="number" min="0" step="0.5" value="2" />
+              </label>
+            </div>
+            <div class="row row-2">
+              <label>
+                Datasets per run (burst control)
+                <input id="tdx-datasets-per-run" type="number" min="0" step="1" value="0" />
+              </label>
+              <label class="toggle" style="align-self: end">
+                <input id="tdx-reset" type="checkbox" />
+                Reset bulk files on start
+              </label>
+            </div>
+            <div class="row row-2">
+              <button id="tdx-start-btn" type="button" class="btn">Start / Resume</button>
+              <button id="tdx-cancel-btn" type="button" class="btn">Cancel</button>
+            </div>
+            <div id="tdx-job-status" class="hint"></div>
+          </div>
+          <div class="debug-grid">
+            <div>
+              <div class="debug-title">Last response</div>
+              <pre id="debug-response" class="debug-pre">{}</pre>
+            </div>
+            <div>
+              <div class="debug-title">Selected item</div>
+              <pre id="debug-selected" class="debug-pre">{}</pre>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -345,11 +559,25 @@
       </form>
     </dialog>
 
+    <datalist id="catalog-tags"></datalist>
+    <datalist id="catalog-locations"></datalist>
+
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+      crossorigin=""
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+      crossorigin=""
+    />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

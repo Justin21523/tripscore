@@ -97,6 +97,7 @@ const STORAGE = {
   lastQueryV2: "tripscore.last_query.v2",
   uiState: "tripscore.ui_state.v1",
   customPresets: "tripscore.custom_presets.v1",
+  tdxJobId: "tripscore.tdx_job_id.v1",
 };
 
 const state = {
@@ -107,27 +108,225 @@ const state = {
   overridesEnabled: false,
   moveStepM: 50,
   headingDeg: 0,
+  activeTab: "results",
+  showLines: false,
   settings: null,
   serverPresets: {},
   customPresets: {},
   lastResponse: null,
   resultsById: {},
-  resultOrder: [],
+  baseOrder: [],
+  viewOrder: [],
+  baseRankById: {},
   selectedId: null,
   map: null,
   originMarker: null,
   headingLine: null,
+  routeLine: null,
+  routeLines: [],
   destMarkers: {},
+  markerGroup: null,
+  activeSetupStep: "step-1",
+  tdxStatus: null,
+  catalogMeta: null,
+  tdxJobId: null,
+  tdxJob: null,
 };
 
 function setStatus(message) {
   el("status").textContent = message;
 }
 
+function setBusy(busy, message) {
+  const runBtn = el("run-btn");
+  const submitBtn = el("submit");
+  if (runBtn) runBtn.disabled = busy;
+  if (submitBtn) submitBtn.disabled = busy;
+  if (message) setStatus(message);
+}
+
 async function fetchJson(url) {
   const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  if (!resp.ok) {
+    let payload = null;
+    try {
+      payload = await resp.json();
+    } catch (_) {
+      // ignore
+    }
+    const detail = payload && payload.detail !== undefined ? payload.detail : payload;
+    const msg = apiErrorMessage({ status: resp.status, detail });
+    const err = new Error(msg);
+    err.status = resp.status;
+    err.detail = detail;
+    throw err;
+  }
   return await resp.json();
+}
+
+function apiErrorMessage({ status, detail }) {
+  if (detail && typeof detail === "object") {
+    if (detail.message) return `${detail.code ? `${detail.code}: ` : ""}${detail.message}`;
+    try {
+      return `HTTP ${status}: ${JSON.stringify(detail)}`;
+    } catch (_) {
+      return `HTTP ${status}`;
+    }
+  }
+  if (typeof detail === "string" && detail.trim()) return `HTTP ${status}: ${detail}`;
+  return `HTTP ${status}`;
+}
+
+function haversineMeters(aLat, aLon, bLat, bLon) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const s =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+function formatMeters(m) {
+  if (m === null || m === undefined) return "";
+  const meters = Number(m);
+  if (!Number.isFinite(meters)) return "";
+  if (meters < 1000) return `${Math.round(meters)}m`;
+  return `${(meters / 1000).toFixed(2)}km`;
+}
+
+function topComponents(item, n = 2) {
+  const comps = (item.breakdown && item.breakdown.components) || [];
+  return [...comps]
+    .sort((a, b) => (Number(b.contribution) || 0) - (Number(a.contribution) || 0))
+    .slice(0, n);
+}
+
+function componentLabel(name) {
+  const m = {
+    accessibility: "Getting there",
+    weather: "Weather comfort",
+    preference: "Fit to your preferences",
+    context: "Crowd & family context",
+  };
+  return m[name] || name;
+}
+
+function formatUnix(unixSeconds) {
+  if (!unixSeconds) return "";
+  try {
+    const d = new Date(Number(unixSeconds) * 1000);
+    return d.toLocaleString();
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildStory(item) {
+  const dest = item.destination;
+  const total = Number(item.breakdown.total_score) || 0;
+  const comps = topComponents(item, 2);
+  const lines = [];
+
+  lines.push(`Overall suitability score is ${total.toFixed(3)} (0–1 scale).`);
+  if (dest.tags && dest.tags.length) {
+    lines.push(`This place is tagged: ${dest.tags.slice(0, 6).join(", ")}.`);
+  }
+
+  comps.forEach((c) => {
+    const reasons = (c.reasons || []).slice(0, 2).filter(Boolean);
+    if (reasons.length) {
+      lines.push(`${componentLabel(c.name)} mattered most: ${reasons.join("; ")}.`);
+    } else {
+      lines.push(
+        `${componentLabel(c.name)} mattered most: score ${Number(c.score).toFixed(3)} × weight ${Number(
+          c.weight
+        ).toFixed(2)}.`
+      );
+    }
+  });
+
+  const errors =
+    item.breakdown &&
+    item.breakdown.components &&
+    item.breakdown.components
+      .map((c) => (c.details && c.details.tdx_errors ? c.details.tdx_errors : null))
+      .filter(Boolean);
+  if (errors && errors.length) {
+    lines.push("Some real-time transit signals were unavailable; results may be conservative.");
+  }
+
+  return lines.slice(0, 5);
+}
+
+function buildPolicyBrief(item) {
+  const dest = item.destination;
+  const resp = state.lastResponse;
+  const prefs = resp && resp.query ? resp.query : null;
+  const comps = (item.breakdown && item.breakdown.components) || [];
+  const byName = {};
+  comps.forEach((c) => {
+    byName[c.name] = c;
+  });
+
+  const reasons = topComponents(item, 2)
+    .map((c) => {
+      const r = (c.reasons || []).slice(0, 2).filter(Boolean);
+      if (r.length) return `${componentLabel(c.name)}: ${r.join("; ")}`;
+      return `${componentLabel(c.name)}: score ${Number(c.score).toFixed(2)} × w ${Number(c.weight).toFixed(2)}`;
+    })
+    .slice(0, 2);
+
+  const risks = [];
+  const tdxErrs = [];
+  comps.forEach((c) => {
+    const e = c.details && c.details.tdx_errors;
+    if (e && typeof e === "object") {
+      Object.entries(e).forEach(([k, v]) => tdxErrs.push(`${k}: ${String(v).slice(0, 120)}`));
+    }
+  });
+  if (tdxErrs.length) risks.push(`Transit data degraded (${tdxErrs.length} signals): ${tdxErrs.slice(0, 2).join(" · ")}`);
+  const wx = byName.weather;
+  if (wx && wx.details) {
+    if (wx.details.max_precipitation_probability === null) risks.push("Rain probability unavailable (weather is more uncertain).");
+    if (wx.details.mean_temperature_c === null) risks.push("Temperature unavailable (weather is more uncertain).");
+  }
+  const ctx = byName.context;
+  if (ctx && ctx.details && typeof ctx.details.predicted_crowd_risk === "number") {
+    const r = Number(ctx.details.predicted_crowd_risk);
+    if (r > 0.66) risks.push("Crowd risk appears high for this time window.");
+  }
+
+  const tags = new Set((dest.tags || []).map((t) => String(t).toLowerCase()));
+  const suited = [];
+  const notSuited = [];
+  if (tags.has("indoor")) suited.push("People who prefer indoor plans.");
+  if (tags.has("outdoor")) suited.push("People who prefer outdoor plans (weather-sensitive).");
+  if (tags.has("family_friendly")) suited.push("Families with kids.");
+  if (tags.has("crowd_low")) suited.push("People who prefer calmer places.");
+
+  if (prefs && prefs.weather_rain_importance !== null && Number(prefs.weather_rain_importance) >= 0.75 && tags.has("outdoor") && !tags.has("indoor")) {
+    notSuited.push("If avoiding rain is critical, outdoor-first places may disappoint on wet days.");
+  }
+  if (prefs && prefs.avoid_crowds_importance !== null && Number(prefs.avoid_crowds_importance) >= 0.75 && !tags.has("crowd_low")) {
+    notSuited.push("If avoiding crowds is critical, this may not be the safest bet at peak times.");
+  }
+
+  const actions = [];
+  actions.push("Use the map to pick an origin closer to where you’ll actually start.");
+  actions.push("Adjust the time window (weekday vs weekend can change crowd risk).");
+  actions.push("If you want a different style, try a mode (Balanced / Rainy day / Family) then re-run.");
+
+  return {
+    reasons,
+    risks: risks.length ? risks : ["No major risks detected from available signals."],
+    suited: suited.length ? suited.slice(0, 4) : ["General audiences (no strong constraints detected)."],
+    notSuited: notSuited.length ? notSuited.slice(0, 4) : ["No strong mismatch detected."],
+    actions: actions.slice(0, 4),
+  };
 }
 
 function originIcon() {
@@ -173,8 +372,20 @@ function ensureMap(originLat, originLon) {
 
 function clearMarkers() {
   if (!state.map) return;
+  if (state.markerGroup) {
+    state.markerGroup.remove();
+    state.markerGroup = null;
+  }
   Object.values(state.destMarkers).forEach((m) => m.remove());
   state.destMarkers = {};
+  if (state.routeLine) {
+    state.routeLine.remove();
+    state.routeLine = null;
+  }
+  if (state.routeLines && state.routeLines.length) {
+    state.routeLines.forEach((l) => l.remove());
+    state.routeLines = [];
+  }
 }
 
 function updateHeadingLine() {
@@ -205,6 +416,7 @@ function updateHeadingLine() {
 function updateOrigin(lat, lon, { center, source } = { center: false, source: "manual" }) {
   setNumberValue("origin-lat", lat);
   setNumberValue("origin-lon", lon);
+  updateBriefStrip();
 
   const m = ensureMap(lat, lon);
   if (m && center) m.setView([lat, lon], Math.max(m.getZoom(), 12));
@@ -224,12 +436,14 @@ function updateOrigin(lat, lon, { center, source } = { center: false, source: "m
   }
 
   updateHeadingLine();
+  updateRouteLineForSelected();
+  updateRouteLinesForAll();
   if (source === "keyboard" || source === "dpad" || source === "map_click") {
     if (state.autoRun) scheduleAutoRun("origin_move");
   }
 }
 
-function selectResult(id) {
+function selectResult(id, { focusTab } = { focusTab: true }) {
   if (!id || !(id in state.resultsById)) return;
   state.selectedId = id;
   const item = state.resultsById[id];
@@ -240,13 +454,41 @@ function selectResult(id) {
   const dest = item.destination;
   const breakdown = item.breakdown;
 
+  const hero = document.createElement("div");
+  hero.className = "hero";
+
   const title = document.createElement("div");
   title.className = "title";
-  title.textContent = `${dest.name} — total ${Number(breakdown.total_score).toFixed(3)}`;
+  title.textContent = dest.name;
+
+  const score = document.createElement("div");
+  score.className = "hero-score";
+  score.innerHTML = `total <strong>${Number(breakdown.total_score).toFixed(3)}</strong>`;
+
+  hero.appendChild(title);
+  hero.appendChild(score);
 
   const meta = document.createElement("div");
   meta.className = "meta";
   meta.textContent = `${dest.city || ""} ${dest.district || ""}`.trim();
+
+  const sub = document.createElement("div");
+  sub.className = "submeta";
+  const originLat = numberValue("origin-lat");
+  const originLon = numberValue("origin-lon");
+  if (originLat !== null && originLon !== null) {
+    const d = haversineMeters(originLat, originLon, dest.location.lat, dest.location.lon);
+    const pill = document.createElement("span");
+    pill.className = "pill muted";
+    pill.textContent = `origin → dest: ${formatMeters(d)}`;
+    sub.appendChild(pill);
+  }
+  if (dest.description) {
+    const pill = document.createElement("span");
+    pill.className = "pill muted";
+    pill.textContent = String(dest.description).slice(0, 140);
+    sub.appendChild(pill);
+  }
 
   const tags = document.createElement("div");
   tags.className = "tags";
@@ -268,14 +510,75 @@ function selectResult(id) {
     link.appendChild(a);
   }
 
-  inspector.appendChild(title);
+  inspector.appendChild(hero);
   inspector.appendChild(meta);
+  if (sub.childNodes.length) inspector.appendChild(sub);
   if ((dest.tags || []).length > 0) inspector.appendChild(tags);
   if (dest.url) inspector.appendChild(link);
+
+  const story = document.createElement("div");
+  story.className = "story";
+  const storyTitle = document.createElement("h3");
+  storyTitle.textContent = "Policy-style brief";
+  const storyLead = document.createElement("p");
+  storyLead.textContent = "A structured summary designed for quick decision-making and transparency.";
+
+  const sections = buildPolicyBrief(item);
+  const block = (title, items) => {
+    const h = document.createElement("h4");
+    h.textContent = title;
+    const u = document.createElement("ul");
+    (items || []).forEach((t) => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      u.appendChild(li);
+    });
+    return [h, u];
+  };
+
+  story.appendChild(storyTitle);
+  story.appendChild(storyLead);
+  block("Why we recommend it", sections.reasons).forEach((n) => story.appendChild(n));
+  block("Risks & limitations", sections.risks).forEach((n) => story.appendChild(n));
+  block("Good fit for", sections.suited).forEach((n) => story.appendChild(n));
+  block("Not ideal for", sections.notSuited).forEach((n) => story.appendChild(n));
+  block("Recommended next actions", sections.actions).forEach((n) => story.appendChild(n));
+  inspector.appendChild(story);
+
+  inspector.appendChild(scorebarForItem(item));
+
+  const grid = document.createElement("div");
+  grid.className = "component-grid";
+  breakdown.components.forEach((c) => {
+    const card = document.createElement("div");
+    card.className = "comp-card";
+
+    const head = document.createElement("div");
+    head.className = "comp-name";
+    head.textContent = c.name;
+    const badge = document.createElement("span");
+    badge.className = "pill";
+    badge.textContent = `+${Number(c.contribution).toFixed(3)}`;
+    head.appendChild(badge);
+
+    const metrics = document.createElement("div");
+    metrics.className = "comp-metrics";
+    metrics.textContent = `score ${Number(c.score).toFixed(3)} · w ${Number(c.weight).toFixed(2)}`;
+
+    card.appendChild(head);
+    card.appendChild(metrics);
+    card.addEventListener("click", () => {
+      const node = inspector.querySelector(`[data-comp-section="${CSS.escape(c.name)}"]`);
+      if (node) node.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    grid.appendChild(card);
+  });
+  inspector.appendChild(grid);
 
   breakdown.components.forEach((c) => {
     const d = document.createElement("details");
     d.open = c.name === "accessibility";
+    d.dataset.compSection = c.name;
     const s = document.createElement("summary");
     s.textContent = `${c.name}: score ${Number(c.score).toFixed(3)} × w ${Number(c.weight).toFixed(
       2
@@ -284,6 +587,26 @@ function selectResult(id) {
 
     const body = document.createElement("div");
     body.className = "section-body";
+
+    const detailsObj = c.details || {};
+    if (detailsObj && typeof detailsObj === "object" && !Array.isArray(detailsObj)) {
+      const errors = detailsObj.tdx_errors;
+      if (errors && typeof errors === "object" && Object.keys(errors).length) {
+        const alert = document.createElement("div");
+        alert.className = "alert";
+        const t = document.createElement("div");
+        t.className = "alert-title";
+        t.textContent = "Data degraded (upstream unavailable)";
+        const b = document.createElement("div");
+        b.className = "alert-body";
+        b.textContent = Object.entries(errors)
+          .map(([k, v]) => `${k}: ${String(v).slice(0, 160)}`)
+          .join(" · ");
+        alert.appendChild(t);
+        alert.appendChild(b);
+        body.appendChild(alert);
+      }
+    }
 
     if (c.reasons && c.reasons.length) {
       const ul = document.createElement("ul");
@@ -296,79 +619,324 @@ function selectResult(id) {
       body.appendChild(ul);
     }
 
+    const kv = keyValueTable(detailsObj);
+    if (kv) body.appendChild(kv);
+
+    const raw = document.createElement("details");
+    raw.className = "raw-toggle";
+    const rawSum = document.createElement("summary");
+    rawSum.textContent = "Raw details (JSON)";
+    raw.appendChild(rawSum);
     const pre = document.createElement("pre");
     pre.textContent = JSON.stringify(c.details || {}, null, 2);
-    body.appendChild(pre);
+    raw.appendChild(pre);
+    body.appendChild(raw);
+
     d.appendChild(body);
     inspector.appendChild(d);
   });
 
-  // Highlight list selection
+  renderDebug();
+  if (focusTab) openTab("details");
+
   document.querySelectorAll("#results li").forEach((node) => node.classList.remove("selected"));
   const selectedNode = document.querySelector(`#results li[data-id="${CSS.escape(id)}"]`);
   if (selectedNode) selectedNode.classList.add("selected");
 
-  // Highlight map marker
+  highlightMarker(id);
+  if (state.map && state.destMarkers[id]) {
+    const marker = state.destMarkers[id];
+    if (state.markerGroup && typeof state.markerGroup.zoomToShowLayer === "function") {
+      state.markerGroup.zoomToShowLayer(marker, () => marker.openPopup());
+    } else {
+      marker.openPopup();
+    }
+  }
+  updateRouteLineForSelected();
+}
+
+function isPrimitive(v) {
+  return v === null || v === undefined || ["string", "number", "boolean"].includes(typeof v);
+}
+
+function keyValueTable(detailsObj) {
+  if (!detailsObj || typeof detailsObj !== "object" || Array.isArray(detailsObj)) return null;
+  const rows = [];
+  Object.entries(detailsObj).forEach(([k, v]) => {
+    if (!isPrimitive(v)) return;
+    const s = String(v);
+    if (s.length > 160) return;
+    rows.push([k, s]);
+  });
+  if (!rows.length) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "kv";
+  rows.slice(0, 18).forEach(([k, v]) => {
+    const row = document.createElement("div");
+    row.className = "kv-row";
+    const kk = document.createElement("div");
+    kk.className = "k";
+    kk.textContent = k;
+    const vv = document.createElement("div");
+    vv.className = "v";
+    vv.textContent = v;
+    row.appendChild(kk);
+    row.appendChild(vv);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function scorebarForItem(item) {
+  const bar = document.createElement("div");
+  bar.className = "scorebar";
+  const comps = (item.breakdown && item.breakdown.components) || [];
+  const total = Number(item.breakdown.total_score) || 0;
+
+  const seg = (name, cls) => {
+    const c = comps.find((x) => x.name === name);
+    const contrib = c ? Number(c.contribution) : 0;
+    const w = total > 0 ? (contrib / total) * 100 : 0;
+    const span = document.createElement("span");
+    span.className = cls;
+    span.style.width = `${Math.max(0, Math.min(100, w))}%`;
+    span.title = `${name}: ${contrib.toFixed(3)}`;
+    return span;
+  };
+
+  bar.appendChild(seg("accessibility", "seg-accessibility"));
+  bar.appendChild(seg("weather", "seg-weather"));
+  bar.appendChild(seg("preference", "seg-preference"));
+  bar.appendChild(seg("context", "seg-context"));
+  return bar;
+}
+
+function setResultsPayload(payload) {
+  state.lastResponse = payload;
+  state.resultsById = {};
+  state.baseOrder = [];
+  state.viewOrder = [];
+  state.baseRankById = {};
+
+  (payload.results || []).forEach((item, idx) => {
+    const id = item.destination.id;
+    state.resultsById[id] = item;
+    state.baseOrder.push(id);
+    state.baseRankById[id] = idx + 1;
+  });
+
+  updateBriefStrip();
+  updateView({ selectDefault: true });
+}
+
+function highlightMarker(id) {
   Object.entries(state.destMarkers).forEach(([destId, marker]) => {
     const rank = marker.options.__rank || 0;
     marker.setIcon(destIcon(rank, destId === id));
   });
-
-  if (state.map && state.destMarkers[id]) {
-    state.destMarkers[id].openPopup();
-  }
 }
 
-function renderResults(payload) {
-  state.lastResponse = payload;
-  state.resultsById = {};
-  state.resultOrder = [];
-  state.selectedId = null;
+function buildResultListItem(item, { rank }) {
+  const li = document.createElement("li");
+  li.dataset.id = item.destination.id;
 
+  const dest = item.destination;
+  const breakdown = item.breakdown;
+
+  const title = document.createElement("div");
+  title.className = "result-title";
+  const row = document.createElement("div");
+  row.className = "result-row";
+  title.textContent = `${rank || ""}. ${dest.name}`.replace(/^\\. /, "");
+
+  const score = document.createElement("div");
+  score.className = "result-score";
+  score.innerHTML = `score <strong>${Number(breakdown.total_score).toFixed(3)}</strong>`;
+
+  row.appendChild(title);
+  row.appendChild(score);
+
+  const meta = document.createElement("div");
+  meta.className = "result-meta";
+  meta.textContent = `${dest.city || ""} ${dest.district || ""}`.trim();
+
+  const comps = document.createElement("div");
+  comps.className = "components";
+  breakdown.components.forEach((c) => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.textContent = `${c.name}: ${Number(c.contribution).toFixed(3)}`;
+    comps.appendChild(chip);
+  });
+
+  li.appendChild(row);
+  li.appendChild(meta);
+  li.appendChild(scorebarForItem(item));
+  li.appendChild(comps);
+
+  li.addEventListener("click", () => selectResult(dest.id));
+  li.addEventListener("mouseenter", () => highlightMarker(dest.id));
+  li.addEventListener("mouseleave", () => highlightMarker(state.selectedId));
+
+  return li;
+}
+
+function computeViewOrder() {
+  const search = String(el("result-search").value || "").trim().toLowerCase();
+  const tags = parseTagList(el("result-tags").value);
+  const loc = String(el("result-location").value || "").trim().toLowerCase();
+  const locTokens = loc ? loc.split(/\s+/).filter(Boolean) : [];
+  const minScore = Number(el("result-min-score").value || 0) || 0;
+  const sort = String(el("result-sort").value || "rank");
+
+  const items = state.baseOrder
+    .map((id) => state.resultsById[id])
+    .filter(Boolean)
+    .filter((it) => {
+      const name = String(it.destination.name || "").toLowerCase();
+      const district = String(it.destination.district || "").toLowerCase();
+      const city = String(it.destination.city || "").toLowerCase();
+      const id = String(it.destination.id || "").toLowerCase();
+      const score = Number(it.breakdown.total_score) || 0;
+      if (score < minScore) return false;
+      if (
+        search &&
+        !(name.includes(search) || district.includes(search) || city.includes(search) || id.includes(search))
+      ) {
+        return false;
+      }
+      if (loc) {
+        const cityDistrict = `${city} ${district}`.trim();
+        const ok =
+          city.includes(loc) ||
+          district.includes(loc) ||
+          cityDistrict.includes(loc) ||
+          (locTokens.length > 1 && locTokens.every((t) => city.includes(t) || district.includes(t)));
+        if (!ok) return false;
+      }
+      if (tags.length) {
+        const tagSet = new Set((it.destination.tags || []).map((t) => String(t).toLowerCase()));
+        if (!tags.every((t) => tagSet.has(t))) return false;
+      }
+      return true;
+    });
+
+  const scoreOf = (it) => Number(it.breakdown.total_score) || 0;
+  const nameOf = (it) => String(it.destination.name || "").toLowerCase();
+  const stableRank = (it) => state.baseRankById[it.destination.id] || 9999;
+
+  if (sort === "score_desc") items.sort((a, b) => scoreOf(b) - scoreOf(a) || stableRank(a) - stableRank(b));
+  if (sort === "score_asc") items.sort((a, b) => scoreOf(a) - scoreOf(b) || stableRank(a) - stableRank(b));
+  if (sort === "name_asc") items.sort((a, b) => nameOf(a).localeCompare(nameOf(b)) || stableRank(a) - stableRank(b));
+  // sort === "rank": filtered base order is already stable
+
+  return items.map((it) => it.destination.id);
+}
+
+function updateView({ selectDefault } = { selectDefault: false }) {
+  state.viewOrder = computeViewOrder();
   const resultsEl = el("results");
   resultsEl.innerHTML = "";
 
-  payload.results.forEach((item, idx) => {
-    const li = document.createElement("li");
-    li.dataset.id = item.destination.id;
-
-    const dest = item.destination;
-    const breakdown = item.breakdown;
-
-    const title = document.createElement("div");
-    title.className = "result-title";
-    title.textContent = `${idx + 1}. ${dest.name} — total ${Number(breakdown.total_score).toFixed(3)}`;
-
-    const meta = document.createElement("div");
-    meta.className = "result-meta";
-    meta.textContent = `${dest.city || ""} ${dest.district || ""}`.trim();
-
-    const comps = document.createElement("div");
-    comps.className = "components";
-    breakdown.components.forEach((c) => {
-      const chip = document.createElement("div");
-      chip.className = "chip";
-      chip.textContent = `${c.name}: ${Number(c.contribution).toFixed(3)}`;
-      comps.appendChild(chip);
-    });
-
-    li.appendChild(title);
-    li.appendChild(meta);
-    li.appendChild(comps);
-
-    li.addEventListener("click", () => selectResult(dest.id));
-
-    resultsEl.appendChild(li);
-    state.resultsById[dest.id] = item;
-    state.resultOrder.push(dest.id);
+  state.viewOrder.forEach((id, idx) => {
+    const item = state.resultsById[id];
+    if (!item) return;
+    resultsEl.appendChild(buildResultListItem(item, { rank: idx + 1 }));
   });
 
-  if (payload.results.length > 0) {
-    selectResult(payload.results[0].destination.id);
+  const count = el("result-count");
+  if (count) count.textContent = `${state.viewOrder.length}/${state.baseOrder.length} shown`;
+
+  const selectionVisible = state.selectedId && state.viewOrder.includes(state.selectedId);
+  if (selectDefault || (!selectionVisible && state.viewOrder.length)) {
+    const first = selectionVisible ? state.selectedId : state.viewOrder[0];
+    if (first) selectResult(first, { focusTab: false });
+  }
+  if (!state.viewOrder.length) {
+    el("inspector").innerHTML = `<p class="hint">No results match your filters.</p>`;
+    renderDebug();
+    updateRouteLineForSelected();
+  }
+
+  renderMapFromOrder(state.viewOrder);
+}
+
+function openTab(name) {
+  state.activeTab = name;
+
+  const tabs = [
+    ["results", "tab-results", "panel-results"],
+    ["details", "tab-details", "panel-details"],
+    ["debug", "tab-debug", "panel-debug"],
+  ];
+
+  tabs.forEach(([key, tabId, panelId]) => {
+    const tab = el(tabId);
+    const panel = el(panelId);
+    const active = key === name;
+    if (tab) {
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+    }
+    if (panel) panel.classList.toggle("active", active);
+  });
+  saveUiState();
+}
+
+function renderDebug() {
+  const resp = el("debug-response");
+  const sel = el("debug-selected");
+  const meta = el("debug-meta");
+  const tdx = el("debug-tdx");
+  if (resp) resp.textContent = JSON.stringify(state.lastResponse || {}, null, 2);
+  if (sel) {
+    const id = state.selectedId;
+    sel.textContent = id && state.resultsById[id] ? JSON.stringify(state.resultsById[id], null, 2) : "{}";
+  }
+
+  if (meta) {
+    const r = state.lastResponse;
+    const cache = r && r.meta && r.meta.cache ? r.meta.cache : null;
+    const cacheLine = cache
+      ? `Cache: hit ${Number(cache.hits) || 0} · miss ${Number(cache.misses) || 0} · expired ${
+          Number(cache.expired) || 0
+        } · stale ${Number(cache.stale_fallbacks) || 0}`
+      : "Cache: —";
+    const gen = r && r.generated_at ? String(r.generated_at) : "—";
+    const warns = r && r.meta && Array.isArray(r.meta.warnings) ? r.meta.warnings : [];
+    const warnLine = warns.length ? `Warnings: ${warns.length} (see response JSON)` : "Warnings: 0";
+    const sources = r && r.meta && r.meta.data_sources ? r.meta.data_sources : null;
+    const srcLine = sources
+      ? `TDX bus=${sources.tdx ? sources.tdx.bus_stops_count : "—"} · bike=${
+          sources.tdx ? sources.tdx.bike_status_count : "—"
+        } · metro=${sources.tdx ? sources.tdx.metro_stations_count : "—"} · parking=${
+          sources.tdx ? sources.tdx.parking_lots_count : "—"
+        }`
+      : "Sources: —";
+    meta.innerHTML = `<strong>Run summary</strong><br/>Generated at: ${gen}<br/>${cacheLine}<br/>${warnLine}<br/>${srcLine}`;
+  }
+
+  if (tdx) {
+    const st = state.tdxStatus;
+    if (!st || !st.items) {
+      tdx.innerHTML = `<strong>TDX prefetch</strong><br/>Status unavailable.`;
+    } else {
+      const updated = st.last_updated_at_unix ? formatUnix(st.last_updated_at_unix) : "—";
+      const lines = (st.items || [])
+        .slice(0, 12)
+        .map((it) => {
+          const mark = it.done ? "done" : "pending";
+          const scope = `${it.dataset}:${it.scope}`;
+          return `${scope} → ${mark}`;
+        })
+        .join("<br/>");
+      tdx.innerHTML = `<strong>TDX prefetch</strong><br/>City: ${st.city || "—"}<br/>Updated: ${updated}<br/>${lines}`;
+    }
   }
 }
 
-function renderMap(payload) {
+function renderMapFromOrder(order) {
   const originLat = numberValue("origin-lat");
   const originLon = numberValue("origin-lon");
   if (originLat === null || originLon === null) return;
@@ -379,16 +947,34 @@ function renderMap(payload) {
   clearMarkers();
   updateOrigin(originLat, originLon, { center: false, source: "manual" });
 
-  payload.results.forEach((item, idx) => {
+  const useCluster = Boolean(window.L && window.L.markerClusterGroup);
+  const group = useCluster ? L.markerClusterGroup({ showCoverageOnHover: false }) : null;
+  state.markerGroup = group;
+
+  order.forEach((id, idx) => {
+    const item = state.resultsById[id];
+    if (!item) return;
     const d = item.destination;
+    const score = Number(item.breakdown.total_score) || 0;
     const marker = L.marker([d.location.lat, d.location.lon], {
       icon: destIcon(idx + 1, false),
       __rank: idx + 1,
-    }).addTo(m);
-    marker.bindPopup(`${idx + 1}. ${d.name}`);
+    });
+    marker.bindPopup(`${idx + 1}. ${d.name}<br/>score ${score.toFixed(3)}`);
+    marker.bindTooltip(`${d.name} · ${score.toFixed(3)}`, { direction: "top", opacity: 0.9, sticky: true });
     marker.on("click", () => selectResult(d.id));
+    marker.on("mouseover", () => highlightMarker(d.id));
+    marker.on("mouseout", () => highlightMarker(state.selectedId));
     state.destMarkers[d.id] = marker;
+    if (group) group.addLayer(marker);
+    else marker.addTo(m);
   });
+
+  if (group) group.addTo(m);
+
+  highlightMarker(state.selectedId);
+  updateRouteLineForSelected();
+  updateRouteLinesForAll();
 }
 
 function buildAdvancedOverrides() {
@@ -539,6 +1125,9 @@ function saveUiState() {
     overridesEnabled: state.overridesEnabled,
     moveStepM: state.moveStepM,
     headingDeg: state.headingDeg,
+    showLines: state.showLines,
+    activeTab: state.activeTab,
+    activeSetupStep: state.activeSetupStep,
   };
   try {
     localStorage.setItem(STORAGE.uiState, JSON.stringify(ui));
@@ -559,8 +1148,325 @@ function loadUiState() {
     state.overridesEnabled = Boolean(ui.overridesEnabled);
     state.moveStepM = Number(ui.moveStepM) || 50;
     state.headingDeg = Number(ui.headingDeg) || 0;
+    state.showLines = Boolean(ui.showLines);
+    state.activeTab = ui.activeTab || "results";
+    state.activeSetupStep = ui.activeSetupStep || "step-1";
   } catch (_) {
     // Ignore
+  }
+}
+
+function openSetupStep(stepId) {
+  const valid = new Set(["step-1", "step-2", "step-3", "step-4"]);
+  const next = valid.has(stepId) ? stepId : "step-1";
+  state.activeSetupStep = next;
+
+  document.querySelectorAll(".step-section").forEach((node) => {
+    node.classList.toggle("active", node.id === next);
+  });
+  document.querySelectorAll(".step-tab").forEach((btn) => {
+    const active = btn.dataset.step === next;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  saveUiState();
+}
+
+function updateBriefStrip() {
+  const startIso = toTaipeiIso(el("start").value);
+  const endIso = toTaipeiIso(el("end").value);
+  const when = startIso && endIso ? `${fromTaipeiIso(startIso)} → ${fromTaipeiIso(endIso)}` : "—";
+  const lat = numberValue("origin-lat");
+  const lon = numberValue("origin-lon");
+  const from = lat !== null && lon !== null ? `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}` : "—";
+
+  const preset = el("preset").value || "";
+  const goal = preset ? preset : "Custom";
+  const topn = numberValue("top-n");
+
+  el("brief-when").textContent = `When: ${when}`;
+  el("brief-from").textContent = `From: ${from}`;
+  el("brief-goal").textContent = `Goal: ${goal}`;
+  el("brief-topn").textContent = `Top N: ${topn || "—"}`;
+
+  const resp = state.lastResponse;
+  const errors = resp && resp.results ? countTdxErrors(resp.results) : 0;
+  const warnings = resp && resp.meta && Array.isArray(resp.meta.warnings) ? resp.meta.warnings.length : 0;
+  const warnSuffix = warnings ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : "";
+  el("brief-data").textContent = errors ? `Data: Degraded (${errors})${warnSuffix}` : `Data: OK${warnSuffix}`;
+
+  const cache = resp && resp.meta && resp.meta.cache ? resp.meta.cache : null;
+  if (cache) {
+    const hits = Number(cache.hits) || 0;
+    const misses = Number(cache.misses) || 0;
+    const stale = Number(cache.stale_fallbacks) || 0;
+    el("brief-cache").textContent = `Cache: hit ${hits} · miss ${misses} · stale ${stale}`;
+  } else {
+    el("brief-cache").textContent = "Cache: —";
+  }
+
+  if (state.tdxStatus && state.tdxStatus.last_updated_at_unix) {
+    el("brief-updated").textContent = `Updated: ${formatUnix(state.tdxStatus.last_updated_at_unix)}`;
+  } else {
+    el("brief-updated").textContent = "Updated: —";
+  }
+}
+
+function sliderLevelLabel(v) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "—";
+  if (x < 0.34) return "Low";
+  if (x < 0.67) return "Medium";
+  return "High";
+}
+
+function bindSlider(id) {
+  const input = el(id);
+  const valueEl = el(`${id}-value`);
+  const labelEl = el(`${id}-label`);
+  if (!input || !valueEl || !labelEl) return;
+
+  const update = () => {
+    const v = Number(input.value);
+    valueEl.textContent = v.toFixed(2);
+    labelEl.textContent = sliderLevelLabel(v);
+    updateBriefStrip();
+  };
+  input.addEventListener("input", update);
+  sliderUpdaters[id] = update;
+  update();
+}
+
+const sliderUpdaters = {};
+const SLIDER_IDS = [
+  "w-accessibility",
+  "w-weather",
+  "w-preference",
+  "w-context",
+  "avoid-rain",
+  "avoid-crowds",
+  "family-importance",
+  "tag-indoor",
+  "tag-outdoor",
+  "tag-culture",
+  "tag-food",
+  "tag-family",
+  "tag-crowd",
+];
+
+function refreshSliders() {
+  SLIDER_IDS.forEach((id) => {
+    const fn = sliderUpdaters[id];
+    if (fn) fn();
+  });
+}
+
+function applyModeBalanced() {
+  applySettingsDefaults();
+  refreshSliders();
+  updateBriefStrip();
+}
+
+function applyModeRainyDay() {
+  setNumberValue("w-accessibility", 0.25);
+  setNumberValue("w-weather", 0.45);
+  setNumberValue("w-preference", 0.20);
+  setNumberValue("w-context", 0.10);
+  setNumberValue("avoid-rain", 0.9);
+  setNumberValue("avoid-crowds", 0.55);
+  setNumberValue("family-importance", 0.25);
+  setNumberValue("tag-indoor", 1.0);
+  setNumberValue("tag-outdoor", 0.05);
+  setNumberValue("tag-culture", 0.6);
+  setNumberValue("tag-food", 0.5);
+  setNumberValue("tag-family", 0.25);
+  setNumberValue("tag-crowd", 0.55);
+  refreshSliders();
+  updateBriefStrip();
+}
+
+function applyModeFamily() {
+  setNumberValue("w-accessibility", 0.35);
+  setNumberValue("w-weather", 0.20);
+  setNumberValue("w-preference", 0.20);
+  setNumberValue("w-context", 0.25);
+  setNumberValue("avoid-rain", 0.6);
+  setNumberValue("avoid-crowds", 0.75);
+  setNumberValue("family-importance", 0.9);
+  setNumberValue("tag-family", 1.0);
+  setNumberValue("tag-crowd", 0.8);
+  setNumberValue("tag-indoor", 0.7);
+  setNumberValue("tag-outdoor", 0.3);
+  setNumberValue("tag-culture", 0.25);
+  setNumberValue("tag-food", 0.25);
+  refreshSliders();
+  updateBriefStrip();
+}
+
+function countTdxErrors(items) {
+  let n = 0;
+  (items || []).forEach((it) => {
+    const comps = (it.breakdown && it.breakdown.components) || [];
+    comps.forEach((c) => {
+      const errors = c.details && c.details.tdx_errors;
+      if (errors && typeof errors === "object") n += Object.keys(errors).length;
+    });
+  });
+  return n;
+}
+
+async function refreshTdxStatus() {
+  try {
+    state.tdxStatus = await fetchJson("/api/tdx/status");
+  } catch (_) {
+    state.tdxStatus = null;
+  } finally {
+    updateBriefStrip();
+    renderDebug();
+  }
+}
+
+async function loadCatalogMeta() {
+  try {
+    state.catalogMeta = await fetchJson("/api/catalog/meta");
+  } catch (_) {
+    state.catalogMeta = null;
+    return;
+  }
+
+  const tags = el("catalog-tags");
+  if (tags && state.catalogMeta && Array.isArray(state.catalogMeta.tags)) {
+    tags.innerHTML = "";
+    state.catalogMeta.tags.forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      tags.appendChild(opt);
+    });
+  }
+
+  const locs = el("catalog-locations");
+  if (locs && state.catalogMeta) {
+    const options = new Set();
+    (state.catalogMeta.cities || []).forEach((c) => options.add(String(c)));
+    const byCity = state.catalogMeta.districts_by_city || {};
+    Object.entries(byCity).forEach(([city, districts]) => {
+      (districts || []).forEach((d) => {
+        options.add(String(d));
+        options.add(`${city} ${d}`);
+      });
+    });
+    locs.innerHTML = "";
+    [...options].sort().forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      locs.appendChild(opt);
+    });
+  }
+}
+
+function loadTdxJobId() {
+  try {
+    state.tdxJobId = localStorage.getItem(STORAGE.tdxJobId);
+  } catch (_) {
+    state.tdxJobId = null;
+  }
+}
+
+function saveTdxJobId(jobId) {
+  state.tdxJobId = jobId || null;
+  try {
+    if (state.tdxJobId) localStorage.setItem(STORAGE.tdxJobId, state.tdxJobId);
+    else localStorage.removeItem(STORAGE.tdxJobId);
+  } catch (_) {
+    // ignore
+  }
+}
+
+function setTdxJobStatus(text) {
+  const node = el("tdx-job-status");
+  if (node) node.textContent = text || "";
+}
+
+async function refreshTdxJob() {
+  if (!state.tdxJobId) {
+    state.tdxJob = null;
+    setTdxJobStatus("No running job.");
+    return;
+  }
+  try {
+    state.tdxJob = await fetchJson(`/api/tdx/prefetch/${encodeURIComponent(state.tdxJobId)}`);
+    const j = state.tdxJob;
+    const p = j.progress;
+    const prog = p ? `${p.done_count}/${p.total_count} done` : "—";
+    const err = j.last_error ? ` · last error: ${j.last_error.type}` : "";
+    setTdxJobStatus(`Job ${j.job_id} · ${j.status} · city=${j.city} · ${prog}${err}`);
+    if (j.status === "completed" || j.status === "canceled") {
+      // Keep job id for history, but stop polling.
+      return;
+    }
+    setTimeout(refreshTdxJob, 4000);
+  } catch (e) {
+    setTdxJobStatus(`Job status unavailable: ${e.message}`);
+  }
+}
+
+async function startTdxJobFromUi() {
+  const city = String(el("tdx-city").value || "").trim();
+  const sleepSeconds = Number(el("tdx-sleep").value || 2) || 0;
+  const datasetsPerRun = Number(el("tdx-datasets-per-run").value || 0) || 0;
+  const reset = Boolean(el("tdx-reset").checked);
+
+  setTdxJobStatus("Starting…");
+  try {
+    const resp = await fetch("/api/tdx/prefetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        city: city || null,
+        datasets: [
+          "bus_stops",
+          "bus_routes",
+          "bike_stations",
+          "bike_availability",
+          "metro_stations",
+          "parking_lots",
+          "parking_availability",
+        ],
+        reset,
+        sleep_seconds: sleepSeconds,
+        datasets_per_run: datasetsPerRun,
+      }),
+    });
+    if (!resp.ok) {
+      const payload = await resp.json().catch(() => ({}));
+      throw new Error(apiErrorMessage({ status: resp.status, detail: payload.detail || payload }));
+    }
+    const data = await resp.json();
+    saveTdxJobId(data.job_id);
+    await refreshTdxJob();
+  } catch (e) {
+    setTdxJobStatus(`Start failed: ${e.message}`);
+  }
+}
+
+async function cancelTdxJob() {
+  if (!state.tdxJobId) {
+    setTdxJobStatus("No job to cancel.");
+    return;
+  }
+  setTdxJobStatus("Canceling…");
+  try {
+    const resp = await fetch(`/api/tdx/prefetch/${encodeURIComponent(state.tdxJobId)}/cancel`, {
+      method: "POST",
+    });
+    if (!resp.ok) {
+      const payload = await resp.json().catch(() => ({}));
+      throw new Error(apiErrorMessage({ status: resp.status, detail: payload.detail || payload }));
+    }
+    await resp.json().catch(() => ({}));
+    await refreshTdxJob();
+  } catch (e) {
+    setTdxJobStatus(`Cancel failed: ${e.message}`);
   }
 }
 
@@ -611,6 +1517,7 @@ function applyPreset(preset, { isCustom }) {
     } else if (isCustom) {
       el("overrides-json").value = "";
     }
+    refreshSliders();
   } finally {
     state.applyingPreset = false;
   }
@@ -623,7 +1530,8 @@ function setPresetDescription(name) {
     return;
   }
   const preset = state.customPresets[name] || state.serverPresets[name];
-  node.value = preset && preset.description ? preset.description : name;
+  const version = preset && preset.version ? ` (v${preset.version})` : "";
+  node.value = preset && preset.description ? `${preset.description}${version}` : `${name}${version}`;
 }
 
 function loadCustomPresets() {
@@ -763,6 +1671,8 @@ function applySettingsDefaults() {
   setNumberValue("park-radius", park.radius_m);
   setNumberValue("park-lot-cap", park.lot_cap);
   setNumberValue("park-spaces-cap", park.available_spaces_cap);
+
+  refreshSliders();
 }
 
 function setDefaultTimes() {
@@ -826,6 +1736,7 @@ function loadSavedQueryIntoForm(saved) {
   const select = el("preset");
   select.value = saved.preset_selection || saved.preset || "";
   setPresetDescription(select.value);
+  refreshSliders();
 }
 
 let autoRunTimer = null;
@@ -839,13 +1750,14 @@ function scheduleAutoRun(reason) {
 
 async function runRecommendation({ reason } = { reason: "manual" }) {
   const statusPrefix = reason ? `[${reason}] ` : "";
-  setStatus(`${statusPrefix}Requesting recommendations…`);
+  const started = performance.now();
+  setBusy(true, `${statusPrefix}Requesting recommendations…`);
 
   let payload;
   try {
     payload = buildPreferencesPayload();
   } catch (e) {
-    setStatus(`Error: ${e.message}`);
+    setBusy(false, `Error: ${e.message}`);
     return;
   }
 
@@ -859,14 +1771,18 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
+      throw new Error(apiErrorMessage({ status: resp.status, detail: err.detail || err }));
     }
     const data = await resp.json();
-    setStatus(`${statusPrefix}Got ${data.results.length} results.`);
-    renderResults(data);
-    renderMap(data);
+    const ms = Math.round(performance.now() - started);
+    setBusy(false, `${statusPrefix}Got ${data.results.length} results in ${ms}ms.`);
+    openTab("results");
+    setResultsPayload(data);
+    renderDebug();
+    updateBriefStrip();
+    refreshTdxStatus();
   } catch (e) {
-    setStatus(`${statusPrefix}Error: ${e.message}`);
+    setBusy(false, `${statusPrefix}Error: ${e.message}`);
   }
 }
 
@@ -874,6 +1790,7 @@ function onPresetChanged() {
   if (state.applyingPreset) return;
   const name = el("preset").value || "";
   setPresetDescription(name);
+  updateBriefStrip();
   if (!name) {
     el("delete-preset-btn").disabled = true;
     return;
@@ -900,6 +1817,7 @@ function resetAll() {
 
   applySettingsDefaults();
   setDefaultTimes();
+  refreshSliders();
 
   updateOrigin(numberValue("origin-lat") || 25.0478, numberValue("origin-lon") || 121.517, {
     center: true,
@@ -924,6 +1842,10 @@ function saveCustomPresetFromForm() {
 
   const preset = {
     description,
+    saved_at_unix: Math.floor(Date.now() / 1000),
+    based_on_preset: payload.preset || null,
+    based_on_version:
+      payload.preset && state.serverPresets[payload.preset] ? state.serverPresets[payload.preset].version || null : null,
     component_weights: payload.component_weights,
     weather_rain_importance: payload.weather_rain_importance,
     avoid_crowds_importance: payload.avoid_crowds_importance,
@@ -1077,9 +1999,9 @@ function onGlobalKeyDown(evt) {
     return;
   }
 
-  if (/^[1-9]$/.test(evt.key) && state.resultOrder.length) {
+  if (/^[1-9]$/.test(evt.key) && state.viewOrder.length) {
     const idx = Number(evt.key) - 1;
-    const id = state.resultOrder[idx];
+    const id = state.viewOrder[idx];
     if (id) {
       evt.preventDefault();
       selectResult(id);
@@ -1168,7 +2090,46 @@ function initDom() {
     clearMarkers();
     el("results").innerHTML = "";
     el("inspector").innerHTML = `<p class="hint">Cleared.</p>`;
+    el("debug-response").textContent = "{}";
+    el("debug-selected").textContent = "{}";
+    el("result-count").textContent = "";
+    state.lastResponse = null;
+    state.resultsById = {};
+    state.baseOrder = [];
+    state.viewOrder = [];
+    state.baseRankById = {};
+    state.selectedId = null;
     setStatus("Cleared results and markers.");
+  });
+
+  el("fit-btn").addEventListener("click", () => fitToResults());
+  el("show-lines").addEventListener("change", (e) => {
+    state.showLines = Boolean(e.target.checked);
+    saveUiState();
+    updateRouteLinesForAll();
+  });
+
+  el("mode-balanced").addEventListener("click", () => {
+    applyModeBalanced();
+    if (state.autoRun) scheduleAutoRun("mode:balanced");
+  });
+  el("mode-rainy").addEventListener("click", () => {
+    applyModeRainyDay();
+    if (state.autoRun) scheduleAutoRun("mode:rainy");
+  });
+  el("mode-family").addEventListener("click", () => {
+    applyModeFamily();
+    if (state.autoRun) scheduleAutoRun("mode:family");
+  });
+
+  document.querySelectorAll(".step-tab").forEach((btn) => {
+    btn.addEventListener("click", () => openSetupStep(btn.dataset.step));
+  });
+  document.querySelectorAll("[data-next-step]").forEach((btn) => {
+    btn.addEventListener("click", () => openSetupStep(btn.dataset.nextStep));
+  });
+  document.querySelectorAll("[data-prev-step]").forEach((btn) => {
+    btn.addEventListener("click", () => openSetupStep(btn.dataset.prevStep));
   });
 
   el("preset").addEventListener("change", onPresetChanged);
@@ -1216,13 +2177,16 @@ function initDom() {
 
   el("quick-window").addEventListener("change", () => {
     applyQuickWindow();
+    updateBriefStrip();
     if (state.autoRun) scheduleAutoRun("time_window");
   });
   el("start").addEventListener("change", () => {
     applyQuickWindow();
+    updateBriefStrip();
     if (state.autoRun) scheduleAutoRun("time_window");
   });
   el("end").addEventListener("change", () => {
+    updateBriefStrip();
     if (state.autoRun) scheduleAutoRun("time_window");
   });
 
@@ -1230,14 +2194,31 @@ function initDom() {
     const lat = numberValue("origin-lat");
     const lon = numberValue("origin-lon");
     if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: false, source: "manual" });
+    updateBriefStrip();
   });
   el("origin-lon").addEventListener("change", () => {
     const lat = numberValue("origin-lat");
     const lon = numberValue("origin-lon");
     if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: false, source: "manual" });
+    updateBriefStrip();
   });
 
-  el("result-search").addEventListener("input", applySearchFilter);
+  ["result-search", "result-tags", "result-location"].forEach((id) => {
+    el(id).addEventListener("input", () => updateView({ selectDefault: false }));
+  });
+  ["result-sort", "result-min-score"].forEach((id) => {
+    el(id).addEventListener("change", () => updateView({ selectDefault: false }));
+  });
+
+  el("tab-results").addEventListener("click", () => openTab("results"));
+  el("tab-details").addEventListener("click", () => openTab("details"));
+  el("tab-debug").addEventListener("click", () => {
+    renderDebug();
+    openTab("debug");
+  });
+
+  el("tdx-start-btn").addEventListener("click", () => startTdxJobFromUi());
+  el("tdx-cancel-btn").addEventListener("click", () => cancelTdxJob());
 
   el("copy-query-btn").addEventListener("click", async () => {
     try {
@@ -1272,6 +2253,7 @@ function initDom() {
 
 (async function init() {
   loadUiState();
+  loadTdxJobId();
   el("auto-run").checked = state.autoRun;
   el("pick-origin").checked = state.pickOrigin;
   el("enable-overrides").checked = state.overridesEnabled;
@@ -1282,6 +2264,7 @@ function initDom() {
 
   await loadServerSettings();
   await loadServerPresets();
+  await loadCatalogMeta();
   loadCustomPresets();
   rebuildPresetSelect();
 
@@ -1294,11 +2277,99 @@ function initDom() {
   setPresetDescription(el("preset").value || "");
   el("delete-preset-btn").disabled = !Boolean(state.customPresets[el("preset").value || ""]);
 
+  if (state.settings && state.settings.ingestion && state.settings.ingestion.tdx) {
+    const city = state.settings.ingestion.tdx.city;
+    if (el("tdx-city") && !el("tdx-city").value) el("tdx-city").value = city || "";
+  }
+
   const lat = numberValue("origin-lat") || 25.0478;
   const lon = numberValue("origin-lon") || 121.517;
   ensureMap(lat, lon);
   updateOrigin(lat, lon, { center: true, source: "manual" });
 
   initDom();
+  el("show-lines").checked = state.showLines;
+  openTab(state.activeTab || "results");
+  openSetupStep(state.activeSetupStep || "step-1");
+  updateBriefStrip();
+  await refreshTdxStatus();
+  await refreshTdxJob();
+  SLIDER_IDS.forEach(bindSlider);
   setStatus("Ready. Press Ctrl+Enter to run.");
 })();
+
+function updateRouteLineForSelected() {
+  if (!state.map) return;
+  const originLat = numberValue("origin-lat");
+  const originLon = numberValue("origin-lon");
+  if (originLat === null || originLon === null) return;
+
+  const id = state.selectedId;
+  const item = id ? state.resultsById[id] : null;
+  if (!item) {
+    if (state.routeLine) {
+      state.routeLine.remove();
+      state.routeLine = null;
+    }
+    return;
+  }
+
+  const to = [item.destination.location.lat, item.destination.location.lon];
+  const from = [originLat, originLon];
+  const points = [from, to];
+  if (!state.routeLine) {
+    state.routeLine = L.polyline(points, { color: "#1f9ad6", weight: 3, opacity: 0.9 }).addTo(state.map);
+  } else {
+    state.routeLine.setLatLngs(points);
+  }
+
+  const d = haversineMeters(originLat, originLon, item.destination.location.lat, item.destination.location.lon);
+  const text = `Distance ${formatMeters(d)}`;
+  if (!state.routeLine.getTooltip()) {
+    state.routeLine.bindTooltip(text, { permanent: true, direction: "center", className: "route-label" });
+  } else {
+    state.routeLine.setTooltipContent(text);
+  }
+}
+
+function updateRouteLinesForAll() {
+  if (!state.map) return;
+  if (state.routeLines && state.routeLines.length) {
+    state.routeLines.forEach((l) => l.remove());
+    state.routeLines = [];
+  }
+  if (!state.showLines) return;
+
+  const originLat = numberValue("origin-lat");
+  const originLon = numberValue("origin-lon");
+  if (originLat === null || originLon === null) return;
+  const from = [originLat, originLon];
+
+  state.viewOrder.slice(0, 30).forEach((id) => {
+    const it = state.resultsById[id];
+    if (!it) return;
+    const to = [it.destination.location.lat, it.destination.location.lon];
+    const line = L.polyline([from, to], { color: "#6aa9ff", weight: 2, opacity: 0.25 }).addTo(state.map);
+    state.routeLines.push(line);
+  });
+}
+
+function fitToResults() {
+  if (!state.map) return;
+  const originLat = numberValue("origin-lat");
+  const originLon = numberValue("origin-lon");
+  if (originLat === null || originLon === null) return;
+
+  const pts = [[originLat, originLon]];
+  state.viewOrder.forEach((id) => {
+    const it = state.resultsById[id];
+    if (!it) return;
+    pts.push([it.destination.location.lat, it.destination.location.lon]);
+  });
+  if (pts.length < 2) {
+    state.map.setView([originLat, originLon], Math.max(state.map.getZoom(), 12));
+    return;
+  }
+  const bounds = L.latLngBounds(pts);
+  state.map.fitBounds(bounds.pad(0.12));
+}
