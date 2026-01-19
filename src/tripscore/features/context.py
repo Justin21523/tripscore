@@ -1,13 +1,23 @@
+"""
+Context feature (destination-level).
+
+This module estimates "context suitability" as a blend of:
+- crowd risk (time-window heuristics + optional parking-derived congestion proxy)
+- family-friendliness (district baseline + optional `family_friendly` tag bonus)
+
+It is intentionally heuristic and explainable, with all knobs living in config.
+"""
+
 from __future__ import annotations
 
 import json
 from datetime import datetime
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import BaseModel, Field, TypeAdapter
 
 from tripscore.config.settings import Settings
+from tripscore.core.env import resolve_project_path
 from tripscore.domain.models import Destination, UserPreferences
 from tripscore.scoring.composite import clamp01, normalize_weights
 
@@ -64,7 +74,8 @@ def _time_window_multiplier(
 
 @lru_cache
 def _load_district_factors(path: str) -> dict[tuple[str, str], DistrictFactor]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    resolved = resolve_project_path(path)
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
     factors = _DISTRICT_FACTORS_ADAPTER.validate_python(payload)
     out: dict[tuple[str, str], DistrictFactor] = {}
     for f in factors:

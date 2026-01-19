@@ -15,13 +15,18 @@ from __future__ import annotations
 import logging  # Use structured logs instead of print() so apps can route/format logs consistently.
 from datetime import datetime  # Used for timestamps in API responses (generated_at).
 from pathlib import Path  # Used for OS-independent path handling when loading local catalogs.
+from typing import Any
+import time
 from zoneinfo import ZoneInfo  # Used for timezone-aware timestamps (important for correct "generated_at").
 
 # Local application imports (each layer stays separate to keep the codebase maintainable).
-from tripscore.catalog.loader import load_destinations  # Loads Destination objects from the on-disk catalog.
+from tripscore.catalog.loader import (
+    load_destinations_with_details,
+)  # Loads Destination objects from on-disk catalogs.
 from tripscore.config.overrides import apply_settings_overrides  # Safely applies per-request config overrides.
 from tripscore.config.settings import Settings, get_settings  # Loads typed settings from YAML (and env overrides).
 from tripscore.core.cache import FileCache  # Local file cache used by ingestion clients to avoid extra API calls.
+from tripscore.core.env import resolve_project_path  # Resolve relative paths against the repo root.
 from tripscore.core.time import ensure_tz  # Ensures datetimes are timezone-aware for correct comparisons.
 from tripscore.domain.models import (
     ComponentWeights,  # Per-component weights used by the composite scorer (accessibility/weather/etc.).
@@ -49,7 +54,7 @@ logger = logging.getLogger(__name__)  # Module-level logger (configured by app e
 
 def build_cache(settings: Settings) -> FileCache:
     # Convert the configured cache directory to a Path for cross-platform correctness.
-    cache_dir = Path(settings.cache.dir)
+    cache_dir = resolve_project_path(settings.cache.dir)
     # Build a cache object used by ingestion clients to reduce API calls (faster + fewer rate limits).
     return FileCache(
         cache_dir,
@@ -118,6 +123,9 @@ def recommend(
     tdx_client: TdxClient | None = None,
     weather_client: WeatherClient | None = None,
 ) -> RecommendationResult:
+    t0 = time.monotonic()
+    timings_ms: dict[str, int] = {}
+
     # ---- Step 1: Resolve settings for THIS run (data flow: API/CLI -> recommender -> features) ----
     # Use injected settings (tests) or load the default config from YAML (normal runtime).
     settings = settings or get_settings()
@@ -228,7 +236,10 @@ def recommend(
         # We keep the catalog path in config so the system is reproducible across environments.
         catalog_path = Path(settings.catalog.path)
         # The loader parses the JSON into typed Destination objects.
-        destinations = load_destinations(catalog_path)
+        destinations = load_destinations_with_details(
+            catalog_path=catalog_path, details_path=getattr(settings.catalog, "details_path", None)
+        )
+    timings_ms["load_catalog"] = int((time.monotonic() - t0) * 1000)
 
     # ---- Step 9: Apply tag filters (fast pruning before we do any expensive API calls) ----
     candidates = [
@@ -236,9 +247,11 @@ def recommend(
         for d in destinations
         if _passes_tag_filters(d, required=normalized_query.required_tags, excluded=normalized_query.excluded_tags)
     ]
+    timings_ms["candidate_filter"] = int((time.monotonic() - t0) * 1000)
 
     # ---- Step 10: Ingest external signals (fail-open, because external APIs can be unavailable) ----
     # We fetch once per request (not per destination) to keep network usage bounded.
+    t_ingest = time.monotonic()
     bus_stops = None
     bike_stations = None
     metro_stations = None
@@ -247,6 +260,7 @@ def recommend(
     tdx_bike_error: str | None = None
     tdx_metro_error: str | None = None
     tdx_parking_error: str | None = None
+    weather_error_count = 0
     try:
         # Bus stops provide a "station density" proxy for accessibility around each destination.
         bus_stops = tdx_client.get_bus_stops()
@@ -276,9 +290,12 @@ def recommend(
     except Exception as e:
         tdx_parking_error = str(e)
         logger.warning("TDX parking ingestion unavailable: %s", tdx_parking_error)
+    timings_ms["ingest_tdx"] = int((time.monotonic() - t_ingest) * 1000)
 
     # ---- Step 11: Score every candidate destination (pure math + best-effort ingestion) ----
     # Note: This loop may call the weather API per destination; caching is critical for speed.
+    t_score = time.monotonic()
+    t_weather = 0.0
     results: list[RecommendationItem] = []
     for dest in candidates:
         # --- 11a) Accessibility scoring (origin proximity + local transit density) ---
@@ -308,6 +325,8 @@ def recommend(
         if tdx_errors:
             a_details = {**a_details, "tdx_errors": tdx_errors}
 
+        weather_ok = True
+        t_w0 = time.monotonic()
         try:
             # Fetch a weather summary for this destination and time window (may be cached).
             summary = weather_client.get_summary(lat=dest.location.lat, lon=dest.location.lon, start=start, end=end)
@@ -316,6 +335,10 @@ def recommend(
             summary = WeatherSummary(max_precipitation_probability=None, mean_temperature_c=None)
             # Log the failure with destination ID so operators can correlate with upstream outages.
             logger.warning("Weather ingestion failed for %s: %s", dest.id, str(e))
+            weather_ok = False
+            weather_error_count += 1
+        finally:
+            t_weather += time.monotonic() - t_w0
 
         # --- 11b) Weather scoring (rain + temperature, adjusted by indoor/outdoor tags) ---
         w_score, w_details, w_reasons = score_weather(
@@ -393,16 +416,97 @@ def recommend(
             components=components,
         )
         # We keep the full Destination payload so the UI can render name, tags, and map position.
-        results.append(RecommendationItem(destination=dest, breakdown=breakdown))
+        item_meta = {
+            "data_completeness": {
+                "tdx_bus_stops": bool(bus_stops),
+                "tdx_bike": bool(bike_stations),
+                "tdx_metro": bool(metro_stations),
+                "tdx_parking": bool(parking_lots),
+                "weather": bool(weather_ok),
+            }
+        }
+        results.append(RecommendationItem(destination=dest, breakdown=breakdown, meta=item_meta))
+    timings_ms["score_total"] = int((time.monotonic() - t_score) * 1000)
+    timings_ms["weather_total"] = int(t_weather * 1000)
 
     # ---- Step 12: Rank results (descending score) and return Top-N ----
+    t_rank = time.monotonic()
     results.sort(key=lambda r: r.breakdown.total_score, reverse=True)
+    timings_ms["rank"] = int((time.monotonic() - t_rank) * 1000)
 
     # Use server timezone for generated_at so timestamps are consistent across API and UI.
     generated_at = datetime.now(ZoneInfo(settings.app.timezone))
+    warnings: list[dict[str, Any]] = []
+    if tdx_bus_error:
+        warnings.append(
+            {
+                "code": "TDX_BUS_UNAVAILABLE",
+                "message": "TDX bus stop data unavailable",
+                "detail": tdx_bus_error,
+            }
+        )
+    if tdx_bike_error:
+        warnings.append(
+            {
+                "code": "TDX_BIKE_UNAVAILABLE",
+                "message": "TDX bike data unavailable",
+                "detail": tdx_bike_error,
+            }
+        )
+    if tdx_metro_error:
+        warnings.append(
+            {
+                "code": "TDX_METRO_UNAVAILABLE",
+                "message": "TDX metro station data unavailable",
+                "detail": tdx_metro_error,
+            }
+        )
+    if tdx_parking_error:
+        warnings.append(
+            {
+                "code": "TDX_PARKING_UNAVAILABLE",
+                "message": "TDX parking data unavailable",
+                "detail": tdx_parking_error,
+            }
+        )
+    if weather_error_count:
+        warnings.append(
+            {
+                "code": "WEATHER_PARTIAL",
+                "message": "Weather data failed for some destinations; scores may be less precise.",
+                "detail": {"failed_destination_count": int(weather_error_count)},
+            }
+        )
+
+    meta = {
+        "data_sources": {
+            "tdx": {
+                "city": settings.ingestion.tdx.city,
+                "bus_stops_count": len(bus_stops or []),
+                "bike_status_count": len(bike_stations or []),
+                "metro_stations_count": len(metro_stations or []),
+                "parking_lots_count": len(parking_lots or []),
+            },
+            "weather": {"failed_destination_count": int(weather_error_count)},
+            "catalog": {"candidates_scored": len(candidates)},
+        },
+        "settings_snapshot": {
+            "preset": normalized_query.preset,
+            "max_results": int(effective_top_n),
+            "component_weights": {k: float(v) for k, v in effective_weights.items()},
+            "tag_weights": normalized_query.tag_weights or {},
+            "required_tags": list(normalized_query.required_tags or []),
+            "excluded_tags": list(normalized_query.excluded_tags or []),
+            "overrides_enabled": bool(normalized_query.settings_overrides),
+        },
+        "warnings": warnings,
+        "timings_ms": timings_ms,
+    }
+
     # Return a structured result so clients (CLI/API/Web) all share the same response format.
     return RecommendationResult(
         generated_at=generated_at,
         query=normalized_query,
         results=results[:effective_top_n],
+        meta=meta,
     )

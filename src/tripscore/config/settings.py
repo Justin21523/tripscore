@@ -1,3 +1,14 @@
+"""
+Application settings (Pydantic).
+
+Settings are loaded from `src/tripscore/config/defaults.yaml`, then optionally overridden by:
+- environment variables (e.g., `TDX_CLIENT_ID`, `TDX_CLIENT_SECRET`)
+- an external YAML file via `TRIPSCORE_CONFIG_PATH`
+
+Design rule:
+- Tuning knobs live in YAML, not hard-coded in business logic.
+"""
+
 from __future__ import annotations
 
 import os
@@ -9,8 +20,10 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from tripscore.core.env import load_dotenv_if_present, resolve_project_path
 
 def _read_package_yaml(filename: str) -> dict[str, Any]:
+    """Read a YAML file packaged inside `tripscore.config`."""
     text = resources.files("tripscore.config").joinpath(filename).read_text(encoding="utf-8")
     data = yaml.safe_load(text) or {}
     if not isinstance(data, dict):
@@ -19,6 +32,7 @@ def _read_package_yaml(filename: str) -> dict[str, Any]:
 
 
 def _read_yaml_file(path: str | Path) -> dict[str, Any]:
+    """Read a YAML file from disk and return its mapping root."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Invalid YAML root object for {path}; expected a mapping.")
@@ -40,6 +54,7 @@ class CacheSettings(BaseModel):
 
 class CatalogSettings(BaseModel):
     path: str = "data/catalogs/destinations.json"
+    details_path: str | None = None
 
 
 class TdxBusStopsSettings(BaseModel):
@@ -71,6 +86,22 @@ class TdxParkingLotsSettings(BaseModel):
 class TdxParkingAvailabilitySettings(BaseModel):
     top: int = 1000
     select: str = "ParkingLotUID,AvailableSpaces,TotalSpaces"
+
+
+class TdxBusRoutesSettings(BaseModel):
+    top: int = 1000
+    select: str = "RouteUID,RouteName"
+
+
+class TdxRetrySettings(BaseModel):
+    max_attempts: int = Field(5, ge=0)
+    base_delay_seconds: float = Field(0.5, ge=0)
+    max_delay_seconds: float = Field(10.0, ge=0)
+
+class TdxBulkSettings(BaseModel):
+    enabled: bool = True
+    max_pages_per_call: int = Field(1, ge=1)
+    max_seconds_per_call: float | None = Field(20.0, ge=0)
 
 
 class MetroAccessibilitySettings(BaseModel):
@@ -119,9 +150,13 @@ class TdxSettings(BaseModel):
     metro_stations: TdxMetroStationsSettings = Field(default_factory=TdxMetroStationsSettings)
     parking_lots: TdxParkingLotsSettings = Field(default_factory=TdxParkingLotsSettings)
     parking_availability: TdxParkingAvailabilitySettings = Field(default_factory=TdxParkingAvailabilitySettings)
+    bus_routes: TdxBusRoutesSettings = Field(default_factory=TdxBusRoutesSettings)
     parking_availability_cache_ttl_seconds: int = 300
     bike_availability_cache_ttl_seconds: int = 300
     cache_ttl_seconds: int = 60 * 60 * 24
+    request_spacing_seconds: float = Field(0.0, ge=0)
+    retry: TdxRetrySettings = Field(default_factory=TdxRetrySettings)
+    bulk: TdxBulkSettings = Field(default_factory=TdxBulkSettings)
     accessibility: AccessibilitySettings = Field(default_factory=AccessibilitySettings)
     client_id: str | None = None
     client_secret: str | None = None
@@ -248,6 +283,10 @@ class Settings(BaseModel):
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
+    """Overlay selected environment variables onto raw settings payload.
+
+    Note: We intentionally keep this whitelist small to avoid exposing unsafe overrides.
+    """
     data = dict(data)
     cache_dir = os.getenv("TRIPSCORE_CACHE_DIR")
     if cache_dir:
@@ -269,12 +308,22 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
 @lru_cache
 def get_settings() -> Settings:
+    """Load and validate settings (cached)."""
+    # Ensure repo-local `.env` is loaded (best-effort) before reading any env vars.
+    # This makes CLI/API/notebooks work without manually `source`-ing shell profiles.
+    load_dotenv_if_present()
+
     config_path = os.getenv("TRIPSCORE_CONFIG_PATH")
-    raw = _read_yaml_file(config_path) if config_path else _read_package_yaml("defaults.yaml")
+    raw = (
+        _read_yaml_file(resolve_project_path(config_path))
+        if config_path
+        else _read_package_yaml("defaults.yaml")
+    )
     raw = _apply_env_overrides(raw)
     return Settings.model_validate(raw)
 
 
 @lru_cache
 def get_logging_config() -> dict[str, Any]:
+    """Load logging configuration (cached)."""
     return _read_package_yaml("logging.yaml")

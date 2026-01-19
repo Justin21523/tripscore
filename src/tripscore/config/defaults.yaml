@@ -11,12 +11,22 @@ cache:
 
 catalog:
   path: data/catalogs/destinations.json
+  details_path: null
 
 ingestion:
   tdx:
     base_url: https://tdx.transportdata.tw/api/basic/v2
     token_url: https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token
     city: Taipei
+    request_spacing_seconds: 0.05
+    retry:
+      max_attempts: 6
+      base_delay_seconds: 0.5
+      max_delay_seconds: 10.0
+    bulk:
+      enabled: true
+      max_pages_per_call: 1
+      max_seconds_per_call: 20
     bus_stops:
       top: 1000
       select: StopUID,StopName,StopPosition
@@ -36,6 +46,9 @@ ingestion:
     parking_availability:
       top: 1000
       select: ParkingLotUID,AvailableSpaces,TotalSpaces
+    bus_routes:
+      top: 1000
+      select: RouteUID,RouteName
     parking_availability_cache_ttl_seconds: 300
     bike_availability_cache_ttl_seconds: 300
     cache_ttl_seconds: 86400

@@ -1,3 +1,15 @@
+# src/tripscore/features/parking.py
+"""
+Parking feature (destination-level).
+
+This module converts parking lot availability (from TDX ingestion) into:
+- simple metrics (count, nearest distance, available spaces),
+- an explainable 0..1 score that can be used as a congestion proxy.
+
+This feature is optional: when parking availability is missing, callers can choose
+to ignore it or degrade gracefully.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -12,6 +24,8 @@ from tripscore.scoring.composite import clamp01, normalize_weights
 
 @dataclass(frozen=True)
 class ParkingMetrics:
+    """Aggregated parking metrics within a radius around a destination."""
+
     lots_within_radius: int
     nearest_lot_distance_m: float
     available_spaces_within_radius: int | None
@@ -22,6 +36,7 @@ class ParkingMetrics:
 def compute_parking_metrics(
     destination: Destination, *, lots: list[ParkingLotStatus], radius_m: int
 ) -> ParkingMetrics:
+    """Compute parking metrics for a destination given a list of parking lots."""
     dest_pt = CoreGeoPoint(lat=destination.location.lat, lon=destination.location.lon)
 
     nearest: float | None = None
@@ -55,6 +70,7 @@ def compute_parking_metrics(
 
 
 def score_parking_availability(metrics: ParkingMetrics, *, settings: Settings) -> tuple[float, dict, list[str]]:
+    """Convert parking metrics into a normalized 0..1 score with details + reasons."""
     cfg = settings.features.parking
 
     lot_score = min(metrics.lots_within_radius, cfg.lot_cap) / max(cfg.lot_cap, 1)
@@ -94,4 +110,3 @@ def score_parking_availability(metrics: ParkingMetrics, *, settings: Settings) -
         "weights": weights,
     }
     return score, details, reasons
-

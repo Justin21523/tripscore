@@ -1,3 +1,4 @@
+# src/tripscore/features/preference_match.py
 """
 Preference match feature (destination-level).
 

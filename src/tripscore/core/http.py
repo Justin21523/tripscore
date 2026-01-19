@@ -1,3 +1,14 @@
+"""
+HTTP helpers.
+
+This module centralizes the minimal HTTP client logic used by ingestion clients.
+
+Design goals:
+- Small surface area (GET JSON, POST form).
+- Deterministic defaults (timeout + User-Agent).
+- Raise on non-2xx so callers can decide how to fail (often "fail-open" in recommenders).
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -15,6 +26,12 @@ def get_json(
     headers: dict[str, str] | None = None,
     timeout_seconds: float = 15,
 ) -> Any:
+    """GET `url` and return the decoded JSON response.
+
+    Raises:
+        httpx.HTTPError: On transport errors or non-2xx status codes.
+        ValueError: If the response body is not valid JSON.
+    """
     request_headers = {"User-Agent": DEFAULT_USER_AGENT}
     if headers:
         request_headers.update(headers)
@@ -32,6 +49,14 @@ def post_form(
     headers: dict[str, str] | None = None,
     timeout_seconds: float = 15,
 ) -> Any:
+    """POST `data` as form-encoded body and return the decoded JSON response.
+
+    Used by the TDX OAuth client-credentials flow.
+
+    Raises:
+        httpx.HTTPError: On transport errors or non-2xx status codes.
+        ValueError: If the response body is not valid JSON.
+    """
     request_headers = {"User-Agent": DEFAULT_USER_AGENT}
     if headers:
         request_headers.update(headers)

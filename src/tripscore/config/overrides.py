@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+
 # We keep typing intentionally flexible because overrides come from JSON payloads (dict-like objects)
 # and we want clear error messages when users send unexpected shapes.
 from typing import Any, Mapping
 
 from tripscore.config.settings import Settings
+
+"""
+Per-request settings overrides (safe subset).
+
+The web UI and API can send `settings_overrides` to tune certain knobs for a single
+recommendation run. This module:
+- validates the override payload against a whitelist,
+- deep-merges the safe subset onto current settings,
+- re-validates with Pydantic to ensure types/ranges remain correct.
+
+Security note:
+We intentionally do NOT allow overriding secrets (TDX credentials) or file paths.
+"""
 
 # This constant defines which parts of the global Settings object can be overridden per request.
 #
@@ -19,6 +33,7 @@ from tripscore.config.settings import Settings
 # Security note (important):
 # - We intentionally do NOT allow overriding file paths like `features.context.district_factors_path`,
 #   because that could let a user point the server at arbitrary files.
+
 ALLOWED_SETTINGS_OVERRIDES_TREE: dict[str, Any] = {
     # Scoring is safe to tune because it only changes numeric weights and thresholds.
     "scoring": True,
@@ -76,7 +91,9 @@ def _filter_overrides(
         # If the key is not explicitly allowed, we reject it early with a precise path.
         if key not in allowed_tree:
             dotted_path = ".".join((*path, key))
-            raise ValueError(f"settings_overrides contains a disallowed key: '{dotted_path}'")
+            raise ValueError(
+                f"settings_overrides contains a disallowed key: '{dotted_path}'"
+            )
 
         # `allowed` is either True (allow subtree) or a nested dict (restrict subtree).
         allowed = allowed_tree[key]
@@ -88,21 +105,29 @@ def _filter_overrides(
         # If the subtree is restricted, the override value must be a mapping we can recurse into.
         if not isinstance(value, Mapping):
             dotted_path = ".".join((*path, key))
-            raise ValueError(f"settings_overrides key '{dotted_path}' must be a mapping")
+            raise ValueError(
+                f"settings_overrides key '{dotted_path}' must be a mapping"
+            )
 
         # Recurse into the subtree to validate nested keys.
-        filtered[key] = _filter_overrides(value, allowed_tree=allowed, path=(*path, key))
+        filtered[key] = _filter_overrides(
+            value, allowed_tree=allowed, path=(*path, key)
+        )
     # Returning only the safe keys prevents clients from changing unrelated configuration.
     return filtered
 
 
-def apply_settings_overrides(settings: Settings, overrides: Mapping[str, Any] | None) -> Settings:
+def apply_settings_overrides(
+    settings: Settings, overrides: Mapping[str, Any] | None
+) -> Settings:
     # If the request did not include overrides, we return the original Settings unchanged.
     if not overrides:
         return settings
 
     # First, validate and strip overrides to a safe subset (raises ValueError on disallowed keys).
-    safe_overrides = _filter_overrides(overrides, allowed_tree=ALLOWED_SETTINGS_OVERRIDES_TREE)
+    safe_overrides = _filter_overrides(
+        overrides, allowed_tree=ALLOWED_SETTINGS_OVERRIDES_TREE
+    )
 
     # Then, merge the safe overrides into the current settings dict (override values take priority).
     merged_payload = _deep_merge(settings.model_dump(mode="python"), safe_overrides)

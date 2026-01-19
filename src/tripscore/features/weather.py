@@ -1,3 +1,4 @@
+# src/tripscore/features/weather.py
 """
 Weather feature (destination-level).
 

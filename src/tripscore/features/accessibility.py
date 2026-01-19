@@ -1,3 +1,4 @@
+# src/tripscore/features/accessibility.py
 """
 Accessibility feature (destination-level).
 

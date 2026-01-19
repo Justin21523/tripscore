@@ -1,3 +1,10 @@
+"""
+Logging configuration.
+
+We use a YAML logging config (`src/tripscore/config/logging.yaml`) and then apply
+runtime overrides from settings (e.g., `TRIPSCORE_LOG_LEVEL`).
+"""
+
 from __future__ import annotations
 
 import logging.config
@@ -6,6 +13,7 @@ from tripscore.config.settings import get_logging_config, get_settings
 
 
 def configure_logging() -> None:
+    """Configure the Python logging system based on packaged YAML config + settings."""
     settings = get_settings()
     config = get_logging_config()
 
