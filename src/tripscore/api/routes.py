@@ -10,12 +10,14 @@ Endpoints:
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 from tripscore.catalog.loader import load_destinations_with_details
 from tripscore.config.settings import get_settings
 from tripscore.core.cache import FileCache, record_cache_stats
+from tripscore.core.geo import GeoPoint as CoreGeoPoint, haversine_m
 from tripscore.core.env import resolve_project_path
 from tripscore.core.ingestion_meta import capture_ingestion_meta
 from tripscore.domain.models import RecommendationResult, UserPreferences
@@ -193,6 +195,70 @@ def get_tdx_bus_routes(city: str | None = None) -> dict:
     city_name = str(city or settings.ingestion.tdx.city)
     routes = tdx_client.get_bus_routes(city=city_name)
     return {"city": city_name, "count": len(routes), "routes": [r.__dict__ for r in routes]}
+
+
+@router.get("/api/tdx/bus/eta/nearby")
+def get_tdx_bus_eta_nearby(
+    lat: float,
+    lon: float,
+    city: str | None = None,
+    radius_m: int = 400,
+    max_stops: int = 8,
+    max_rows: int = 40,
+) -> dict:
+    """Return bus ETA rows for nearby stops (targeted, short TTL, best-effort)."""
+    settings = get_settings()
+    tdx_client, _ = _clients()
+    city_name = str(city or settings.ingestion.tdx.city)
+
+    max_stops = max(1, min(20, int(max_stops)))
+    max_rows = max(1, min(200, int(max_rows)))
+    radius_m = max(50, min(3000, int(radius_m)))
+
+    stops = tdx_client.get_bus_stops(city=city_name)
+    origin = CoreGeoPoint(lat=float(lat), lon=float(lon))
+    nearby: list[tuple[float, Any]] = []
+    for s in stops:
+        try:
+            d = haversine_m(origin, CoreGeoPoint(lat=float(s.lat), lon=float(s.lon)))
+        except Exception:
+            continue
+        if d <= radius_m:
+            nearby.append((d, s))
+    nearby.sort(key=lambda x: x[0])
+    chosen = [s for _, s in nearby[:max_stops]]
+    stop_uids = [s.stop_uid for s in chosen]
+    stop_names = {s.stop_uid: s.name for s in chosen}
+
+    rows = tdx_client.get_bus_eta(city=city_name, stop_uids=stop_uids)
+    eta = []
+    for r in rows:
+        if r.estimate_seconds is None:
+            continue
+        eta.append(
+            {
+                "stop_uid": r.stop_uid,
+                "stop_name": r.stop_name or stop_names.get(r.stop_uid),
+                "route_uid": r.route_uid,
+                "route_name": r.route_name,
+                "estimate_seconds": r.estimate_seconds,
+                "direction": r.direction,
+                "updated_at": r.updated_at,
+            }
+        )
+    eta.sort(key=lambda x: int(x["estimate_seconds"]))
+    eta = eta[:max_rows]
+
+    soonest = eta[0]["estimate_seconds"] if eta else None
+    route_count = len({(e["route_uid"], e.get("direction")) for e in eta})
+
+    return {
+        "city": city_name,
+        "query": {"lat": float(lat), "lon": float(lon), "radius_m": radius_m, "max_stops": max_stops},
+        "stops": [{"stop_uid": s.stop_uid, "name": s.name, "lat": s.lat, "lon": s.lon} for s in chosen],
+        "eta": eta,
+        "summary": {"soonest_seconds": soonest, "route_count": route_count},
+    }
 
 
 @router.get("/api/tdx/parking/lots")

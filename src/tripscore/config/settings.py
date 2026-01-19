@@ -62,6 +62,11 @@ class TdxBusStopsSettings(BaseModel):
     select: str = "StopUID,StopName,StopPosition"
 
 
+class TdxBusEstimatedTimeSettings(BaseModel):
+    top: int = 2000
+    select: str = "StopUID,StopName,RouteUID,RouteName,EstimateTime,StopSequence,Direction,UpdateTime"
+
+
 class TdxBikeStationsSettings(BaseModel):
     top: int = 1000
     select: str = "StationUID,StationName,StationPosition"
@@ -145,6 +150,7 @@ class TdxSettings(BaseModel):
     token_url: str
     city: str = "Taipei"
     bus_stops: TdxBusStopsSettings = Field(default_factory=TdxBusStopsSettings)
+    bus_estimated_time: TdxBusEstimatedTimeSettings = Field(default_factory=TdxBusEstimatedTimeSettings)
     bike_stations: TdxBikeStationsSettings = Field(default_factory=TdxBikeStationsSettings)
     bike_availability: TdxBikeAvailabilitySettings = Field(default_factory=TdxBikeAvailabilitySettings)
     metro_stations: TdxMetroStationsSettings = Field(default_factory=TdxMetroStationsSettings)
@@ -153,6 +159,7 @@ class TdxSettings(BaseModel):
     bus_routes: TdxBusRoutesSettings = Field(default_factory=TdxBusRoutesSettings)
     parking_availability_cache_ttl_seconds: int = 300
     bike_availability_cache_ttl_seconds: int = 300
+    bus_estimated_time_cache_ttl_seconds: int = 30
     cache_ttl_seconds: int = 60 * 60 * 24
     request_spacing_seconds: float = Field(0.0, ge=0)
     retry: TdxRetrySettings = Field(default_factory=TdxRetrySettings)

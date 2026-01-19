@@ -30,6 +30,9 @@ ingestion:
     bus_stops:
       top: 1000
       select: StopUID,StopName,StopPosition
+    bus_estimated_time:
+      top: 2000
+      select: StopUID,StopName,RouteUID,RouteName,EstimateTime,StopSequence,Direction,UpdateTime
     bike_stations:
       top: 1000
       select: StationUID,StationName,StationPosition
@@ -51,6 +54,7 @@ ingestion:
       select: RouteUID,RouteName
     parking_availability_cache_ttl_seconds: 300
     bike_availability_cache_ttl_seconds: 300
+    bus_estimated_time_cache_ttl_seconds: 30
     cache_ttl_seconds: 86400
     accessibility:
       radius_m: 500

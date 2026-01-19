@@ -51,6 +51,19 @@ class BusRoute:
 
 
 @dataclass(frozen=True)
+class BusEta:
+    """One real-time bus arrival estimate for a stop/route."""
+
+    stop_uid: str
+    stop_name: str | None
+    route_uid: str
+    route_name: str | None
+    estimate_seconds: int | None
+    direction: int | None
+    updated_at: str | None
+
+
+@dataclass(frozen=True)
 class BikeStationStatus:
     """YouBike station location + current availability (if provided)."""
 
@@ -491,6 +504,148 @@ class TdxClient:
             except Exception:
                 continue
         return routes
+
+    def get_bus_eta(self, *, city: str | None = None, stop_uids: list[str] | None = None) -> list[BusEta]:
+        """Return real-time bus ETA rows for the requested stop UIDs (cached, short TTL).
+
+        Notes:
+        - This is designed for *targeted* queries (e.g., a few nearby stops), not a full-city crawl.
+        - We cache with a short TTL to reduce TDX load and tolerate bursts.
+        """
+        city = city or self._settings.ingestion.tdx.city
+        stop_uids = [str(s).strip() for s in (stop_uids or []) if str(s).strip()]
+        if not stop_uids:
+            record_ingestion_source(f"tdx:bus_eta:city_{city}", {"mode": "none", "city": city})
+            return []
+
+        # Keep filter size bounded (avoid oversized URLs); caller should pre-filter.
+        stop_uids = stop_uids[:12]
+        stop_uids_sorted = sorted(set(stop_uids))
+        cache_key = f"tdx_bus_eta:{city}:{'|'.join(stop_uids_sorted)}"
+        ttl = int(self._settings.ingestion.tdx.bus_estimated_time_cache_ttl_seconds)
+        base_url = self._settings.ingestion.tdx.base_url.rstrip("/")
+        endpoint = f"{base_url}/Bus/EstimatedTimeOfArrival/City/{city}"
+        select = self._settings.ingestion.tdx.bus_estimated_time.select
+        top = int(self._settings.ingestion.tdx.bus_estimated_time.top)
+
+        def _escape(v: str) -> str:
+            return v.replace("'", "''")
+
+        filt = " or ".join([f"StopUID eq '{_escape(uid)}'" for uid in stop_uids_sorted])
+
+        source_name = f"tdx:bus_eta:city_{city}"
+        cached = self._cache.get("tdx", cache_key, ttl_seconds=ttl)
+        if isinstance(cached, list):
+            meta = self._cache.get_entry_meta("tdx", cache_key) or {}
+            record_ingestion_source(
+                source_name,
+                {
+                    "mode": "cache",
+                    "dataset": "bus_eta",
+                    "city": city,
+                    "as_of_unix": meta.get("created_at_unix"),
+                    "ttl_seconds": meta.get("ttl_seconds"),
+                    "stop_count": len(stop_uids_sorted),
+                },
+            )
+            raw = cached
+        else:
+
+            def builder() -> list[dict[str, Any]]:
+                params = {"$format": "JSON", "$top": top, "$select": select, "$filter": filt}
+                return self._tdx_get_json(endpoint, params=params)
+
+            try:
+                raw = self._cache.get_or_set(
+                    "tdx",
+                    cache_key,
+                    builder,
+                    ttl_seconds=ttl,
+                    stale_if_error=True,
+                    stale_predicate=self._stale_ok,
+                )
+                meta = self._cache.get_entry_meta("tdx", cache_key) or {}
+                record_ingestion_source(
+                    source_name,
+                    {
+                        "mode": "live",
+                        "dataset": "bus_eta",
+                        "city": city,
+                        "as_of_unix": meta.get("created_at_unix"),
+                        "ttl_seconds": meta.get("ttl_seconds"),
+                        "stop_count": len(stop_uids_sorted),
+                    },
+                )
+            except Exception:
+                stale = self._cache.get_stale("tdx", cache_key)
+                if isinstance(stale, list):
+                    meta = self._cache.get_entry_meta("tdx", cache_key) or {}
+                    record_ingestion_source(
+                        source_name,
+                        {
+                            "mode": "stale",
+                            "dataset": "bus_eta",
+                            "city": city,
+                            "as_of_unix": meta.get("created_at_unix"),
+                            "ttl_seconds": meta.get("ttl_seconds"),
+                            "stop_count": len(stop_uids_sorted),
+                        },
+                    )
+                    raw = stale
+                else:
+                    record_ingestion_source(
+                        source_name,
+                        {"mode": "none", "dataset": "bus_eta", "city": city, "stop_count": len(stop_uids_sorted)},
+                    )
+                    raise
+
+        if not isinstance(raw, list):
+            return []
+
+        out: list[BusEta] = []
+        for item in raw:
+            try:
+                stop_uid = str(item.get("StopUID") or "")
+                route_uid = str(item.get("RouteUID") or "")
+                if not stop_uid or not route_uid:
+                    continue
+                stop_name_obj = item.get("StopName") or {}
+                route_name_obj = item.get("RouteName") or {}
+                stop_name = (
+                    str(stop_name_obj.get("Zh_tw"))
+                    if isinstance(stop_name_obj, dict) and stop_name_obj.get("Zh_tw")
+                    else None
+                )
+                route_name = (
+                    str(route_name_obj.get("Zh_tw"))
+                    if isinstance(route_name_obj, dict) and route_name_obj.get("Zh_tw")
+                    else None
+                )
+                est = item.get("EstimateTime")
+                estimate_seconds: int | None = None
+                if isinstance(est, (int, float)):
+                    try:
+                        estimate_seconds = int(est)
+                    except Exception:
+                        estimate_seconds = None
+                direction = item.get("Direction")
+                direction_i = int(direction) if isinstance(direction, (int, float)) else None
+                updated_at = str(item.get("UpdateTime") or "") or None
+                out.append(
+                    BusEta(
+                        stop_uid=stop_uid,
+                        stop_name=stop_name,
+                        route_uid=route_uid,
+                        route_name=route_name,
+                        estimate_seconds=estimate_seconds,
+                        direction=direction_i,
+                        updated_at=updated_at,
+                    )
+                )
+            except Exception:
+                continue
+
+        return out
 
     def get_bus_stops_sample(self, *, city: str | None = None, top: int = 10) -> list[BusStop]:
         """Return a small sample of parsed bus stops (cached, first page only)."""
