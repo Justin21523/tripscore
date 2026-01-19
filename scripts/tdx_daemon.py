@@ -8,36 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tripscore.config.settings import get_settings
+from tripscore.ingestion.tdx_cities import ALL_CITIES
 from tripscore.ingestion.tdx_bulk import DatasetName, bulk_prefetch_all, read_bulk_progress
 from tripscore.ingestion.tdx_client import TdxClient
 from tripscore.core.env import resolve_project_path
 from tripscore.recommender.recommend import build_cache
-
-
-ALL_CITIES: list[str] = [
-    "Taipei",
-    "NewTaipei",
-    "Taoyuan",
-    "Taichung",
-    "Tainan",
-    "Kaohsiung",
-    "Keelung",
-    "Hsinchu",
-    "HsinchuCounty",
-    "MiaoliCounty",
-    "ChanghuaCounty",
-    "NantouCounty",
-    "YunlinCounty",
-    "Chiayi",
-    "ChiayiCounty",
-    "PingtungCounty",
-    "YilanCounty",
-    "HualienCounty",
-    "TaitungCounty",
-    "KinmenCounty",
-    "PenghuCounty",
-    "LienchiangCounty",
-]
 
 STATIC_DATASETS: list[DatasetName] = [
     "bus_stops",

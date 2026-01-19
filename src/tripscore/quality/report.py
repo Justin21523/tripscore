@@ -17,6 +17,7 @@ from typing import Any
 from tripscore.catalog.loader import load_destinations_with_details
 from tripscore.config.settings import Settings
 from tripscore.core.env import resolve_project_path
+from tripscore.quality.tdx_coverage import build_tdx_bulk_coverage
 
 
 @dataclass(frozen=True)
@@ -124,16 +125,31 @@ def tdx_bulk_issues(settings: Settings) -> list[Issue]:
         return issues
 
     error_files = []
+    unsupported_files = []
     incomplete = []
     for p in progress_files:
         payload = _read_json(p) or {}
         done = bool(payload.get("done", False))
         status = payload.get("error_status")
+        unsupported = bool(payload.get("unsupported", False)) or status == 404
         if status:
-            error_files.append(f"{p.relative_to(base)}:{status}")
+            if unsupported:
+                unsupported_files.append(f"{p.relative_to(base)}:{status}")
+            else:
+                error_files.append(f"{p.relative_to(base)}:{status}")
         if not done:
             incomplete.append(str(p.relative_to(base)))
 
+    if unsupported_files:
+        issues.append(
+            Issue(
+                severity="info",
+                code="TDX_BULK_UNSUPPORTED",
+                message="Some TDX datasets appear unsupported (HTTP 404).",
+                count=len(unsupported_files),
+                sample=unsupported_files[:8],
+            )
+        )
     if error_files:
         issues.append(
             Issue(
@@ -181,6 +197,6 @@ def build_quality_report(settings: Settings) -> dict[str, Any]:
             "cache_dir": str(cache_dir),
             "tdx_bulk_dir": str(base),
         },
+        "tdx": {"bulk_coverage": build_tdx_bulk_coverage(settings)},
         "issues": [i.as_dict() for i in issues],
     }
-

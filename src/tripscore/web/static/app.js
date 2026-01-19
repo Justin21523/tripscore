@@ -15,6 +15,15 @@ function el(id) {
   return document.getElementById(id);
 }
 
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function numberValue(id) {
   const v = el(id).value;
   return v === "" ? null : Number(v);
@@ -128,6 +137,7 @@ const state = {
   markerGroup: null,
   activeSetupStep: "step-1",
   tdxStatus: null,
+  qualityReport: null,
   catalogMeta: null,
   tdxJobId: null,
   tdxJob: null,
@@ -1391,8 +1401,92 @@ async function refreshTdxStatus() {
     state.tdxStatus = null;
   } finally {
     updateBriefStrip();
+    renderCoverage();
     renderDebug();
   }
+}
+
+async function refreshQualityReport() {
+  try {
+    state.qualityReport = await fetchJson("/api/quality/report");
+  } catch (_) {
+    state.qualityReport = null;
+  } finally {
+    renderCoverage();
+  }
+}
+
+function renderCoverage() {
+  const summaryNode = el("coverage-summary");
+  const tableNode = el("coverage-table");
+  if (!summaryNode || !tableNode) return;
+
+  const report = state.qualityReport;
+  const cov = report && report.tdx && report.tdx.bulk_coverage;
+  if (!cov) {
+    summaryNode.textContent = "Coverage report unavailable.";
+    tableNode.innerHTML = "";
+    return;
+  }
+
+  const byDataset = (cov.summary && cov.summary.by_dataset) || {};
+  const lastUpdated = cov.last_updated_at_unix;
+  const updatedStr = lastUpdated ? new Date(lastUpdated * 1000).toLocaleString() : "—";
+
+  const worst = (report && report.overall && report.overall.severity) || "info";
+  const worstBadge =
+    worst === "error"
+      ? `<span class="badge bad">error</span>`
+      : worst === "warning"
+      ? `<span class="badge warn">warning</span>`
+      : `<span class="badge ok">info</span>`;
+
+  summaryNode.innerHTML = `Overall: ${worstBadge} · Last updated: <span class="badge">${escapeHtml(updatedStr)}</span>`;
+
+  const rows = Object.entries(byDataset).map(([dataset, stats]) => {
+    const s = stats || {};
+    return {
+      dataset,
+      done: Number(s.done || 0),
+      unsupported: Number(s.unsupported || 0),
+      error429: Number(s.error_429 || 0),
+      errorOther: Number(s.error_other || 0),
+      incomplete: Number(s.incomplete || 0),
+      missing: Number(s.missing || 0),
+    };
+  });
+  rows.sort((a, b) => a.dataset.localeCompare(b.dataset));
+
+  const th = (t) => `<th>${escapeHtml(t)}</th>`;
+  const td = (t) => `<td>${t}</td>`;
+  const badge = (n, cls) => `<span class="badge ${cls || ""}">${escapeHtml(String(n))}</span>`;
+
+  const html = [];
+  html.push("<table>");
+  html.push("<thead><tr>");
+  html.push(th("Dataset"));
+  html.push(th("Done"));
+  html.push(th("Unsupported (404)"));
+  html.push(th("429"));
+  html.push(th("Other errors"));
+  html.push(th("Incomplete"));
+  html.push(th("Missing"));
+  html.push("</tr></thead>");
+  html.push("<tbody>");
+  rows.forEach((r) => {
+    const warnish = r.error429 + r.errorOther + r.incomplete + r.missing > 0;
+    html.push("<tr>");
+    html.push(td(`<strong>${escapeHtml(r.dataset)}</strong>`));
+    html.push(td(badge(r.done, "ok")));
+    html.push(td(badge(r.unsupported, "warn")));
+    html.push(td(badge(r.error429, r.error429 > 0 ? "bad" : "")));
+    html.push(td(badge(r.errorOther, r.errorOther > 0 ? "bad" : "")));
+    html.push(td(badge(r.incomplete, warnish ? "warn" : "")));
+    html.push(td(badge(r.missing, warnish ? "warn" : "")));
+    html.push("</tr>");
+  });
+  html.push("</tbody></table>");
+  tableNode.innerHTML = html.join("");
 }
 
 async function loadCatalogMeta() {
@@ -2361,10 +2455,14 @@ function initDom() {
   openTab(state.activeTab || "results");
   openSetupStep(state.activeSetupStep || "step-1");
   updateBriefStrip();
+  await refreshQualityReport();
   await refreshTdxStatus();
   await refreshTdxJob();
   SLIDER_IDS.forEach(bindSlider);
   setStatus("Ready. Press Ctrl+Enter to run.");
+
+  setInterval(refreshTdxStatus, 30_000);
+  setInterval(refreshQualityReport, 60_000);
 })();
 
 function updateRouteLineForSelected() {

@@ -68,6 +68,87 @@ body {
   margin-bottom: 10px;
 }
 
+.panel-callout {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: var(--shadow-soft);
+  margin-bottom: 10px;
+}
+
+.panel-callout > summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  color: var(--muted);
+  list-style: none;
+}
+
+.panel-callout > summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-callout .callout-body {
+  padding: 0 12px 12px 12px;
+}
+
+.coverage-table {
+  margin-top: 10px;
+  overflow: auto;
+  max-height: 240px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.coverage-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.coverage-table th,
+.coverage-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.coverage-table thead th {
+  background: rgba(17, 24, 39, 0.03);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: rgba(17, 24, 39, 0.02);
+  font-weight: 800;
+}
+
+.badge.ok {
+  background: rgba(15, 157, 106, 0.10);
+  border-color: rgba(15, 157, 106, 0.26);
+}
+
+.badge.warn {
+  background: rgba(183, 121, 31, 0.12);
+  border-color: rgba(183, 121, 31, 0.30);
+}
+
+.badge.bad {
+  background: rgba(216, 58, 91, 0.10);
+  border-color: rgba(216, 58, 91, 0.28);
+}
+
 .brief-title {
   font-size: 12px;
   font-weight: 900;
