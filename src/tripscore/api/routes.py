@@ -251,15 +251,57 @@ def get_tdx_bus_eta_nearby(
     eta = eta[:max_rows]
 
     soonest = eta[0]["estimate_seconds"] if eta else None
-    route_count = len({(e["route_uid"], e.get("direction")) for e in eta})
+    def route_key(e: dict[str, Any]) -> tuple[str, int | None]:
+        return (str(e.get("route_uid") or ""), e.get("direction"))
+
+    route_count = len({route_key(e) for e in eta})
+
+    # Headway-like summary: for each route/direction, compute delta between first two arrivals (if any).
+    by_route: dict[tuple[str, int | None], list[dict[str, Any]]] = {}
+    for e in eta:
+        by_route.setdefault(route_key(e), []).append(e)
+    route_summaries = []
+    for (ruid, direction), rows in by_route.items():
+        rows = sorted(rows, key=lambda x: int(x.get("estimate_seconds") or 10**9))
+        first = rows[0] if rows else None
+        second = rows[1] if len(rows) > 1 else None
+        headway = None
+        if first and second:
+            try:
+                headway = int(second["estimate_seconds"]) - int(first["estimate_seconds"])
+                if headway < 0:
+                    headway = None
+            except Exception:
+                headway = None
+        route_summaries.append(
+            {
+                "route_uid": ruid,
+                "route_name": first.get("route_name") if first else None,
+                "direction": direction,
+                "soonest_seconds": first.get("estimate_seconds") if first else None,
+                "headway_seconds": headway,
+                "example_stop_name": first.get("stop_name") if first else None,
+            }
+        )
+    route_summaries.sort(key=lambda r: int(r.get("soonest_seconds") or 10**9))
 
     return {
         "city": city_name,
         "query": {"lat": float(lat), "lon": float(lon), "radius_m": radius_m, "max_stops": max_stops},
         "stops": [{"stop_uid": s.stop_uid, "name": s.name, "lat": s.lat, "lon": s.lon} for s in chosen],
         "eta": eta,
-        "summary": {"soonest_seconds": soonest, "route_count": route_count},
+        "summary": {"soonest_seconds": soonest, "route_count": route_count, "routes": route_summaries[:12]},
     }
+
+
+@router.get("/api/tdx/bus/stop_of_route")
+def get_tdx_bus_stop_of_route(route_uid: str, city: str | None = None, direction: int | None = None) -> dict:
+    """Return StopOfRoute rows for a specific route (targeted, cached)."""
+    settings = get_settings()
+    tdx_client, _ = _clients()
+    city_name = str(city or settings.ingestion.tdx.city)
+    stops = tdx_client.get_bus_stop_of_route(city=city_name, route_uid=route_uid, direction=direction)
+    return {"city": city_name, "route_uid": route_uid, "direction": direction, "count": len(stops), "stops": [s.__dict__ for s in stops]}
 
 
 @router.get("/api/tdx/parking/lots")

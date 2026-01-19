@@ -608,16 +608,77 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
         busEtaBody.textContent = "No upcoming buses found for nearby stops (or data unavailable).";
         return;
       }
-      const ul = document.createElement("ul");
+      busEtaBody.innerHTML = "";
+
+      const summary = (data && data.summary) || {};
+      const routes = summary.routes || [];
+      if (Array.isArray(routes) && routes.length) {
+        const h = document.createElement("h4");
+        h.textContent = "Route summaries";
+        const ul = document.createElement("ul");
+        routes.slice(0, 8).forEach((r) => {
+          const li = document.createElement("li");
+          const soonest = r.soonest_seconds !== null && r.soonest_seconds !== undefined ? formatSecondsShort(r.soonest_seconds) : "—";
+          const headway =
+            r.headway_seconds !== null && r.headway_seconds !== undefined ? ` · headway ${formatSecondsShort(r.headway_seconds)}` : "";
+          const name = r.route_name || r.route_uid || "route";
+          const stop = r.example_stop_name ? ` @ ${r.example_stop_name}` : "";
+          const dir = r.direction !== null && r.direction !== undefined ? ` (dir ${r.direction})` : "";
+          li.textContent = `${soonest}${headway} · ${name}${dir}${stop}`;
+          ul.appendChild(li);
+        });
+
+        const top = routes[0];
+        if (top && top.route_uid) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "btn btn-small";
+          btn.textContent = "Show stops for top route";
+          btn.addEventListener("click", async () => {
+            try {
+              btn.disabled = true;
+              btn.textContent = "Loading stops…";
+              const resp = await fetchJson(
+                `/api/tdx/bus/stop_of_route?city=${encodeURIComponent(dest.city || "")}&route_uid=${encodeURIComponent(
+                  top.route_uid
+                )}${top.direction !== null && top.direction !== undefined ? `&direction=${encodeURIComponent(String(top.direction))}` : ""}`
+              );
+              const stops = (resp && resp.stops) || [];
+              const list = document.createElement("ul");
+              stops.slice(0, 24).forEach((s) => {
+                const li = document.createElement("li");
+                li.textContent = `${s.sequence !== null && s.sequence !== undefined ? `${s.sequence}. ` : ""}${s.stop_name || s.stop_uid}`;
+                list.appendChild(li);
+              });
+              busEtaBody.appendChild(document.createElement("hr"));
+              const h2 = document.createElement("h4");
+              h2.textContent = "Stops (sample)";
+              busEtaBody.appendChild(h2);
+              busEtaBody.appendChild(list);
+              btn.remove();
+            } catch (e) {
+              btn.textContent = `Stops unavailable: ${e.message}`;
+            }
+          });
+          busEtaBody.appendChild(btn);
+        }
+
+        busEtaBody.appendChild(h);
+        busEtaBody.appendChild(ul);
+      }
+
+      const ul2 = document.createElement("ul");
       eta.slice(0, 10).forEach((e) => {
         const li = document.createElement("li");
         const stop = e.stop_name ? `@ ${e.stop_name}` : "";
         const route = e.route_name || e.route_uid || "route";
         li.textContent = `${formatSecondsShort(e.estimate_seconds)} · ${route} ${stop}`;
-        ul.appendChild(li);
+        ul2.appendChild(li);
       });
-      busEtaBody.innerHTML = "";
-      busEtaBody.appendChild(ul);
+      const hRaw = document.createElement("h4");
+      hRaw.textContent = "Raw ETAs";
+      busEtaBody.appendChild(hRaw);
+      busEtaBody.appendChild(ul2);
     } catch (e) {
       if (busEtaCard.dataset.destId !== dest.id) return;
       busEtaBody.textContent = `TDX bus ETA unavailable: ${e.message}`;

@@ -115,6 +115,15 @@ Data persistence:
 If you see `PermissionError` writing to `./.cache/tripscore`, set:
 - `TRIPSCORE_DOCKER_UID` / `TRIPSCORE_DOCKER_GID` in `.env` to match `id -u` / `id -g`
 
+## POI Details Import (local file)
+
+For fields like `opening_hours`, `address`, and `url`, use the local details file at `data/catalogs/destination_details.json`.
+
+```bash
+PYTHONPATH=src python scripts/poi_details_import.py --in-csv your_details.csv --id-field id
+PYTHONPATH=src python scripts/poi_details_validate.py
+```
+
 ## Web Controls (Editor Mode)
 - Move origin: drag the origin marker, enable “Pick origin” then click the map, or use the D‑pad / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>.
 - Rotate heading: <kbd>Q</kbd>/<kbd>E</kbd> (visual indicator; does not affect scoring yet).

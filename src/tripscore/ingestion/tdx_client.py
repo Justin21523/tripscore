@@ -52,6 +52,18 @@ class BusRoute:
 
 
 @dataclass(frozen=True)
+class BusRouteStop:
+    """One stop entry from StopOfRoute."""
+
+    route_uid: str
+    route_name: str | None
+    stop_uid: str
+    stop_name: str | None
+    direction: int | None
+    sequence: int | None
+
+
+@dataclass(frozen=True)
 class BusEta:
     """One real-time bus arrival estimate for a stop/route."""
 
@@ -748,6 +760,99 @@ class TdxClient:
             except Exception:
                 continue
 
+        return out
+
+    def get_bus_stop_of_route(
+        self, *, city: str | None = None, route_uid: str, direction: int | None = None
+    ) -> list[BusRouteStop]:
+        """Return stop sequence for a bus route (cached, targeted).
+
+        This is intended for UI enrichment (route shape/stop list) and should not be crawled at city scale.
+        """
+        city = city or self._settings.ingestion.tdx.city
+        route_uid = str(route_uid or "").strip()
+        if not route_uid:
+            record_ingestion_source(f"tdx:bus_stop_of_route:city_{city}", {"mode": "none", "city": city})
+            return []
+
+        ttl = int(self._settings.ingestion.tdx.cache_ttl_seconds)
+        cache_key = f"tdx_bus_stop_of_route:{city}:{route_uid}:{'' if direction is None else int(direction)}"
+        base_url = self._settings.ingestion.tdx.base_url.rstrip("/")
+        endpoint = f"{base_url}/Bus/StopOfRoute/City/{city}"
+
+        def _escape(v: str) -> str:
+            return v.replace("'", "''")
+
+        filt = f"RouteUID eq '{_escape(route_uid)}'"
+        if direction is not None:
+            try:
+                filt = f"{filt} and Direction eq {int(direction)}"
+            except Exception:
+                pass
+
+        def builder() -> list[dict[str, Any]]:
+            params = {
+                "$format": "JSON",
+                "$top": 200,
+                "$select": "RouteUID,RouteName,Direction,Stops",
+                "$filter": filt,
+            }
+            raw = self._tdx_get_json(endpoint, params=params)
+            return raw if isinstance(raw, list) else []
+
+        raw = self._cache.get_or_set(
+            "tdx",
+            cache_key,
+            builder,
+            ttl_seconds=ttl,
+            stale_if_error=True,
+            stale_predicate=self._stale_ok,
+        )
+        if not isinstance(raw, list):
+            return []
+
+        out: list[BusRouteStop] = []
+        for item in raw:
+            try:
+                ruid = str(item.get("RouteUID") or "") or route_uid
+                rname_obj = item.get("RouteName") or {}
+                rname = (
+                    str(rname_obj.get("Zh_tw"))
+                    if isinstance(rname_obj, dict) and rname_obj.get("Zh_tw")
+                    else None
+                )
+                dir_v = item.get("Direction")
+                dir_i = int(dir_v) if isinstance(dir_v, (int, float)) else None
+                stops = item.get("Stops") or []
+                if not isinstance(stops, list):
+                    continue
+                for s in stops:
+                    if not isinstance(s, dict):
+                        continue
+                    stop_uid = str(s.get("StopUID") or "")
+                    stop_name_obj = s.get("StopName") or {}
+                    stop_name = (
+                        str(stop_name_obj.get("Zh_tw"))
+                        if isinstance(stop_name_obj, dict) and stop_name_obj.get("Zh_tw")
+                        else None
+                    )
+                    seq = s.get("StopSequence")
+                    seq_i = int(seq) if isinstance(seq, (int, float)) else None
+                    if stop_uid:
+                        out.append(
+                            BusRouteStop(
+                                route_uid=ruid,
+                                route_name=rname,
+                                stop_uid=stop_uid,
+                                stop_name=stop_name,
+                                direction=dir_i,
+                                sequence=seq_i,
+                            )
+                        )
+            except Exception:
+                continue
+
+        out.sort(key=lambda r: (r.direction if r.direction is not None else 0, r.sequence if r.sequence is not None else 0))
         return out
 
     def get_bus_stops_sample(self, *, city: str | None = None, top: int = 10) -> list[BusStop]:
