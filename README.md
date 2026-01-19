@@ -34,6 +34,25 @@ pip install -r requirements.txt
 
 Create a `.env` from `.env.example` and set `TDX_CLIENT_ID` / `TDX_CLIENT_SECRET` to enable TDX ingestion.
 
+Load it into your environment (bash/zsh):
+
+```bash
+cp .env.example .env
+# edit .env, then:
+set -a
+source .env
+set +a
+```
+
+## Notebooks
+
+Notebook-first walkthroughs live in `notebooks/` (offline-friendly with stub clients).
+
+```bash
+pip install -r requirements-notebooks.txt
+jupyter lab
+```
+
 ## Run (CLI)
 
 ```bash
@@ -45,7 +64,7 @@ PYTHONPATH=src python -m tripscore.cli recommend \
 ## Run (API + Web)
 
 ```bash
-PYTHONPATH=src uvicorn tripscore.api.app:app --reload --port 8000
+PYTHONPATH=src uvicorn tripscore.api.app:app --reload --port 8000 --env-file .env
 ```
 
 Then open `http://127.0.0.1:8000/`.
