@@ -81,6 +81,33 @@ PYTHONPATH=src uvicorn tripscore.api.app:app --reload --port 8000 --env-file .en
 
 Then open `http://127.0.0.1:8000/`.
 
+## Docker (always-on ingestion)
+
+This repo supports an always-on, rate-limited ingestion setup via Docker Compose:
+
+```bash
+cp .env.example .env
+# edit .env: set TDX_CLIENT_ID / TDX_CLIENT_SECRET
+docker compose up -d --build
+```
+
+Services:
+- `tripscore-api`: web UI + API on `:8000`
+- `tripscore-tdx-daemon`: background ingestion loop (bulk static datasets + continuous availability refresh)
+
+Useful checks:
+
+```bash
+docker compose ps
+docker compose logs -f tdx-daemon
+curl -s http://127.0.0.1:8000/api/quality/report | jq .
+curl -s http://127.0.0.1:8000/api/tdx/status | jq .
+```
+
+Data persistence:
+- cache persists in `./.cache/tripscore/` (mounted into containers)
+- catalog/details persist in `./data/` (mounted into containers)
+
 ## Web Controls (Editor Mode)
 - Move origin: drag the origin marker, enable “Pick origin” then click the map, or use the D‑pad / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>.
 - Rotate heading: <kbd>Q</kbd>/<kbd>E</kbd> (visual indicator; does not affect scoring yet).

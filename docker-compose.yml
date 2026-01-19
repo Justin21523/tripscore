@@ -1,0 +1,44 @@
+services:
+  api:
+    build: .
+    container_name: tripscore-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - TRIPSCORE_CACHE_DIR=/app/.cache/tripscore
+      - TRIPSCORE_LOG_LEVEL=INFO
+    volumes:
+      - ./.cache/tripscore:/app/.cache/tripscore
+      - ./data:/app/data
+    restart: unless-stopped
+
+  tdx-daemon:
+    build: .
+    container_name: tripscore-tdx-daemon
+    env_file:
+      - .env
+    environment:
+      - TRIPSCORE_CACHE_DIR=/app/.cache/tripscore
+      # Keep requests stable (override in .env via TRIPSCORE_CONFIG_PATH or YAML if needed)
+      - TRIPSCORE_LOG_LEVEL=INFO
+    command:
+      [
+        "python",
+        "scripts/tdx_daemon.py",
+        "--cities",
+        "all",
+        "--dynamic-refresh",
+        "--sleep-seconds",
+        "2.0",
+        "--static-pages-per-run",
+        "1",
+        "--static-seconds-per-run",
+        "20.0",
+      ]
+    volumes:
+      - ./.cache/tripscore:/app/.cache/tripscore
+      - ./data:/app/data
+    restart: unless-stopped
+

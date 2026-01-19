@@ -261,6 +261,7 @@ class TdxClient:
         top: int,
         key_field: str,
         ttl_seconds: int,
+        allow_bulk: bool = True,
     ) -> list[dict[str, Any]]:
         source_name = f"tdx:{dataset}:{scope}"
 
@@ -280,7 +281,7 @@ class TdxClient:
             return cached
 
         bulk_settings = self._settings.ingestion.tdx.bulk
-        can_bulk = bool(self._cache.enabled) and bool(bulk_settings.enabled)
+        can_bulk = allow_bulk and bool(self._cache.enabled) and bool(bulk_settings.enabled)
         if can_bulk:
             bulk_data = read_bulk_data(self._cache, dataset, scope)
             bulk_progress = read_bulk_progress(self._cache, dataset, scope)
@@ -711,6 +712,7 @@ class TdxClient:
             top=self._settings.ingestion.tdx.bike_availability.top,
             key_field="StationUID",
             ttl_seconds=self._settings.ingestion.tdx.bike_availability_cache_ttl_seconds,
+            allow_bulk=False,
         )
 
         availability_by_uid: dict[str, tuple[int | None, int | None]] = {}
@@ -957,6 +959,7 @@ class TdxClient:
             top=self._settings.ingestion.tdx.parking_availability.top,
             key_field="ParkingLotUID",
             ttl_seconds=self._settings.ingestion.tdx.parking_availability_cache_ttl_seconds,
+            allow_bulk=False,
         )
 
         availability_by_uid: dict[str, tuple[int | None, int | None]] = {}
