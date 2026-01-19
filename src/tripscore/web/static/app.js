@@ -198,6 +198,13 @@ function formatMeters(m) {
   return `${(meters / 1000).toFixed(2)}km`;
 }
 
+function formatSecondsShort(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s < 0) return "—";
+  if (s < 90) return `${Math.round(s)}s`;
+  return `${Math.round(s / 60)} min`;
+}
+
 function topComponents(item, n = 2) {
   const comps = (item.breakdown && item.breakdown.components) || [];
   return [...comps]
@@ -489,6 +496,24 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
     pill.textContent = String(dest.description).slice(0, 140);
     sub.appendChild(pill);
   }
+  if (dest.opening_hours) {
+    const pill = document.createElement("span");
+    pill.className = "pill muted";
+    pill.textContent = `hours: ${String(dest.opening_hours).slice(0, 120)}`;
+    sub.appendChild(pill);
+  }
+  if (dest.address) {
+    const pill = document.createElement("span");
+    pill.className = "pill muted";
+    pill.textContent = `address: ${String(dest.address).slice(0, 140)}`;
+    sub.appendChild(pill);
+  }
+  if (dest.phone) {
+    const pill = document.createElement("span");
+    pill.className = "pill muted";
+    pill.textContent = `phone: ${String(dest.phone).slice(0, 80)}`;
+    sub.appendChild(pill);
+  }
 
   const tags = document.createElement("div");
   tags.className = "tags";
@@ -544,6 +569,50 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
   block("Not ideal for", sections.notSuited).forEach((n) => story.appendChild(n));
   block("Recommended next actions", sections.actions).forEach((n) => story.appendChild(n));
   inspector.appendChild(story);
+
+  const busEtaCard = document.createElement("div");
+  busEtaCard.className = "story bus-eta";
+  busEtaCard.dataset.destId = dest.id;
+  const busEtaTitle = document.createElement("h3");
+  busEtaTitle.textContent = "Nearby bus arrivals (TDX)";
+  const busEtaLead = document.createElement("p");
+  busEtaLead.textContent = "Real-time estimates for a few nearby stops. Subject to upstream rate limits.";
+  const busEtaBody = document.createElement("div");
+  busEtaBody.className = "bus-eta-body";
+  busEtaBody.textContent = "Loading…";
+  busEtaCard.appendChild(busEtaTitle);
+  busEtaCard.appendChild(busEtaLead);
+  busEtaCard.appendChild(busEtaBody);
+  inspector.appendChild(busEtaCard);
+
+  (async () => {
+    try {
+      const data = await fetchJson(
+        `/api/tdx/bus/eta/nearby?lat=${encodeURIComponent(dest.location.lat)}&lon=${encodeURIComponent(
+          dest.location.lon
+        )}&city=${encodeURIComponent(dest.city || "")}&radius_m=450&max_stops=8&max_rows=24`
+      );
+      if (busEtaCard.dataset.destId !== dest.id) return;
+      const eta = (data && data.eta) || [];
+      if (!eta.length) {
+        busEtaBody.textContent = "No upcoming buses found for nearby stops (or data unavailable).";
+        return;
+      }
+      const ul = document.createElement("ul");
+      eta.slice(0, 10).forEach((e) => {
+        const li = document.createElement("li");
+        const stop = e.stop_name ? `@ ${e.stop_name}` : "";
+        const route = e.route_name || e.route_uid || "route";
+        li.textContent = `${formatSecondsShort(e.estimate_seconds)} · ${route} ${stop}`;
+        ul.appendChild(li);
+      });
+      busEtaBody.innerHTML = "";
+      busEtaBody.appendChild(ul);
+    } catch (e) {
+      if (busEtaCard.dataset.destId !== dest.id) return;
+      busEtaBody.textContent = `TDX bus ETA unavailable: ${e.message}`;
+    }
+  })();
 
   inspector.appendChild(scorebarForItem(item));
 

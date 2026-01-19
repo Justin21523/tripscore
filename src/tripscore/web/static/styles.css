@@ -911,6 +911,16 @@ a:hover {
   margin-bottom: 6px;
 }
 
+.bus-eta .bus-eta-body ul {
+  margin-top: 6px;
+}
+
+.bus-eta .bus-eta-body {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .inspector .tags {
   display: flex;
   flex-wrap: wrap;
