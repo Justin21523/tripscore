@@ -21,6 +21,7 @@ from tripscore.core.geo import GeoPoint as CoreGeoPoint, haversine_m
 from tripscore.core.env import resolve_project_path
 from tripscore.core.ingestion_meta import capture_ingestion_meta
 from tripscore.domain.models import RecommendationResult, UserPreferences
+from tripscore.ingestion.tdx_cities import ALL_CITIES
 from tripscore.ingestion.tdx_client import TdxClient
 from tripscore.ingestion.weather_client import WeatherClient
 from tripscore.quality.report import build_quality_report
@@ -283,6 +284,7 @@ def get_tdx_status() -> dict:
     settings = get_settings()
     cache_dir = resolve_project_path(settings.cache.dir)
     base = cache_dir / "tdx_bulk"
+    metrics_path = cache_dir / "tdx_daemon" / "metrics.json"
 
     def progress(dataset: str, scope: str) -> dict:
         p = base / dataset / f"{scope}.progress.json"
@@ -309,20 +311,47 @@ def get_tdx_status() -> dict:
             pass
         return out
 
+    def city_rows(city_name: str) -> list[dict]:
+        rows: list[dict] = []
+        for ds in [
+            "bus_stops",
+            "bus_routes",
+            "bike_stations",
+            "bike_availability",
+            "parking_lots",
+            "parking_availability",
+        ]:
+            rows.append(progress(ds, f"city_{city_name}"))
+        return rows
+
     city = settings.ingestion.tdx.city
-    rows: list[dict] = []
-    for ds in [
-        "bus_stops",
-        "bus_routes",
-        "bike_stations",
-        "bike_availability",
-        "parking_lots",
-        "parking_availability",
-    ]:
-        rows.append(progress(ds, f"city_{city}"))
+    rows = city_rows(city)
     for op in settings.ingestion.tdx.metro_stations.operators:
         rows.append(progress("metro_stations", f"operator_{op}"))
 
     updated = [r.get("updated_at_unix") for r in rows if r.get("updated_at_unix")]
     last_updated = max(updated) if updated else None
-    return {"city": city, "items": rows, "last_updated_at_unix": last_updated}
+
+    all_payload = []
+    for c in ALL_CITIES:
+        items = city_rows(c)
+        updated = [r.get("updated_at_unix") for r in items if r.get("updated_at_unix")]
+        all_payload.append({"city": c, "items": items, "last_updated_at_unix": max(updated) if updated else None})
+    all_last = [c.get("last_updated_at_unix") for c in all_payload if c.get("last_updated_at_unix")]
+
+    daemon_metrics = None
+    if metrics_path.exists():
+        try:
+            import json
+
+            daemon_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) or None
+        except Exception:
+            daemon_metrics = None
+
+    return {
+        "city": city,
+        "items": rows,
+        "last_updated_at_unix": last_updated,
+        "all": {"cities": all_payload, "last_updated_at_unix": max(all_last) if all_last else None},
+        "daemon": daemon_metrics,
+    }

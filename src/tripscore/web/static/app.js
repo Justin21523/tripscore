@@ -1285,7 +1285,21 @@ function updateBriefStrip() {
   }
 
   if (state.tdxStatus && state.tdxStatus.last_updated_at_unix) {
-    el("brief-updated").textContent = `Updated: ${formatUnix(state.tdxStatus.last_updated_at_unix)}`;
+    const parts = [];
+    parts.push(`bulk ${formatUnix(state.tdxStatus.last_updated_at_unix)}`);
+
+    const daemon = state.tdxStatus.daemon;
+    const tdxm = daemon && daemon.tdx_client;
+    if (tdxm && tdxm.last_success_unix) parts.push(`tdx ok ${formatUnix(tdxm.last_success_unix)}`);
+    if (tdxm && typeof tdxm.requests_per_hour === "number") parts.push(`req/h ${tdxm.requests_per_hour}`);
+
+    const d = daemon && daemon.daemon;
+    if (d && d.global_cooldown_until_unix) {
+      const now = Math.floor(Date.now() / 1000);
+      if (now < Number(d.global_cooldown_until_unix)) parts.push("cooldown");
+    }
+
+    el("brief-updated").textContent = `Updated: ${parts.join(" · ")}`;
   } else {
     el("brief-updated").textContent = "Updated: —";
   }

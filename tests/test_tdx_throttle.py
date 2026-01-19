@@ -24,8 +24,17 @@ def test_tdx_global_request_spacing(monkeypatch, tmp_path):
         lambda *_args, **_kwargs: {"access_token": "token", "expires_in": 3600},
     )
 
-    monotonic_values = iter([0.0, 0.2, 1.0])
-    monkeypatch.setattr("tripscore.ingestion.tdx_client.time.monotonic", lambda: next(monotonic_values))
+    # `_tdx_get_json` now uses `time.monotonic()` for both request timing and spacing throttle.
+    # Use a deterministic sequence, then keep returning the last value if called more times.
+    monotonic_values = [0.0, 0.0, 0.0, 0.2, 0.2, 1.0, 1.0]
+    monotonic_i = {"i": 0}
+
+    def fake_monotonic():
+        i = monotonic_i["i"]
+        monotonic_i["i"] = i + 1
+        return monotonic_values[i] if i < len(monotonic_values) else monotonic_values[-1]
+
+    monkeypatch.setattr("tripscore.ingestion.tdx_client.time.monotonic", fake_monotonic)
 
     sleeps: list[float] = []
     monkeypatch.setattr("tripscore.ingestion.tdx_client.time.sleep", lambda s: sleeps.append(float(s)))
@@ -37,4 +46,3 @@ def test_tdx_global_request_spacing(monkeypatch, tmp_path):
     client._tdx_get_json("https://example.test/b", params={"x": 2})
 
     assert sleeps == [0.8]
-

@@ -103,6 +103,28 @@ def _looks_like_429(exc: Exception) -> bool:
     return " 429" in msg or "too many requests" in msg or "status=429" in msg
 
 
+def _write_metrics(path: Path, *, state: _DaemonState, city: str | None, tdx: TdxClient) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        payload = {
+            "updated_at_unix": int(time.time()),
+            "current_city": city,
+            "daemon": {
+                "cursor": int(state.cursor),
+                "consecutive_429": int(state.consecutive_429),
+                "global_cooldown_until_unix": int(state.global_cooldown_until_unix or 0),
+            },
+            "city_cooldown_until_unix": dict(state.city_cooldown_until_unix or {}),
+            "city_last_dynamic_unix": dict(state.city_last_dynamic_unix or {}),
+            "tdx_client": tdx.metrics_snapshot(),
+        }
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        return
+
+
 def _reset_bulk_for_city(cache_dir: Path, *, city: str) -> None:
     base = cache_dir / "tdx_bulk"
     if not base.exists():
@@ -220,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     cities = _parse_cities(str(args.cities))
     cache_dir = resolve_project_path(settings.cache.dir)
     state_path = resolve_project_path(str(args.state_path))
+    metrics_path = state_path.parent / "metrics.json"
     state = _DaemonState.load(state_path)
 
     # Ensure dicts exist.
@@ -243,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
 
     while True:
         now = int(time.time())
+        _write_metrics(metrics_path, state=state, city=None, tdx=tdx)
 
         global_cd = int(state.global_cooldown_until_unix or 0)
         if global_cd and now < global_cd:
@@ -268,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         city = cities[state.cursor % len(cities)]
         state.cursor = (state.cursor + 1) % len(cities)
+        _write_metrics(metrics_path, state=state, city=city, tdx=tdx)
 
         # Per-city cooldown after repeated 429.
         cooldown_until = int(state.city_cooldown_until_unix.get(city, 0) or 0)
@@ -288,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
                     reset=False,
                 )
                 print(f"[static] city={city} progressed")
+            _write_metrics(metrics_path, state=state, city=city, tdx=tdx)
         except Exception as e:
             if _looks_like_429(e):
                 state.consecutive_429 += 1
@@ -305,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
                 state.consecutive_429 = 0
             print(f"[error] static city={city}: {type(e).__name__}: {e}")
             state.save(state_path)
+            _write_metrics(metrics_path, state=state, city=city, tdx=tdx)
             time.sleep(max(1.0, float(args.sleep_seconds)))
             continue
 
@@ -334,10 +361,12 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"[error] dynamic city={city}: {type(e).__name__}: {e}")
                 finally:
                     state.save(state_path)
+                    _write_metrics(metrics_path, state=state, city=city, tdx=tdx)
 
         # Persist state periodically.
         if random.random() < 0.1:
             state.save(state_path)
+            _write_metrics(metrics_path, state=state, city=city, tdx=tdx)
 
         time.sleep(max(1.0, float(args.sleep_seconds)))
 

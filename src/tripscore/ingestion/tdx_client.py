@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -111,6 +112,15 @@ class TdxClient:
         self._token_expires_at_unix: int = 0
         self._last_request_monotonic: float | None = None
         self._rate_limiter = None
+        self._metrics = {
+            "requests_total": 0,
+            "errors_total": 0,
+            "status_counts": {},
+            "latency_total_ms": 0.0,
+            "last_request_unix": None,
+            "last_success_unix": None,
+        }
+        self._recent_request_unix = deque(maxlen=5000)
 
     def set_rate_limiter(self, limiter) -> None:
         """Attach a best-effort rate limiter.
@@ -118,6 +128,48 @@ class TdxClient:
         The limiter is expected to implement `acquire()`; it may be None to disable.
         """
         self._rate_limiter = limiter
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        """Return a snapshot of request/latency metrics (best-effort)."""
+        try:
+            now = int(time.time())
+            recent = list(self._recent_request_unix)
+            recent_last_hour = [t for t in recent if isinstance(t, int) and (now - t) <= 3600]
+            requests_total = int(self._metrics.get("requests_total") or 0)
+            latency_total_ms = float(self._metrics.get("latency_total_ms") or 0.0)
+            avg_latency_ms = (latency_total_ms / requests_total) if requests_total > 0 else None
+            return {
+                "requests_total": requests_total,
+                "errors_total": int(self._metrics.get("errors_total") or 0),
+                "status_counts": dict(self._metrics.get("status_counts") or {}),
+                "avg_latency_ms": avg_latency_ms,
+                "requests_per_hour": len(recent_last_hour),
+                "last_request_unix": self._metrics.get("last_request_unix"),
+                "last_success_unix": self._metrics.get("last_success_unix"),
+            }
+        except Exception:
+            return {}
+
+    def _record_request(self, *, status_code: int, latency_ms: float) -> None:
+        try:
+            now = int(time.time())
+            self._metrics["requests_total"] = int(self._metrics.get("requests_total") or 0) + 1
+            if int(status_code) >= 400:
+                self._metrics["errors_total"] = int(self._metrics.get("errors_total") or 0) + 1
+            sc = self._metrics.get("status_counts")
+            if not isinstance(sc, dict):
+                sc = {}
+            sc[str(int(status_code))] = int(sc.get(str(int(status_code)), 0)) + 1
+            self._metrics["status_counts"] = sc
+            self._metrics["latency_total_ms"] = float(self._metrics.get("latency_total_ms") or 0.0) + float(
+                latency_ms
+            )
+            self._metrics["last_request_unix"] = now
+            if int(status_code) < 400:
+                self._metrics["last_success_unix"] = now
+            self._recent_request_unix.append(now)
+        except Exception:
+            return
 
     @staticmethod
     def _parse_retry_after_seconds(value: str | None) -> float | None:
@@ -202,21 +254,31 @@ class TdxClient:
             headers = {"Authorization": f"Bearer {token}"}
 
             try:
+                start = time.monotonic()
                 if self._rate_limiter is not None:
                     try:
                         self._rate_limiter.acquire(1.0)
                     except Exception:
                         pass
                 self._throttle_requests()
-                return get_json(
+                out = get_json(
                     url,
                     params=params,
                     headers=headers,
                     timeout_seconds=self._settings.app.http_timeout_seconds,
                 )
+                try:
+                    self._record_request(status_code=200, latency_ms=(time.monotonic() - start) * 1000.0)
+                except Exception:
+                    pass
+                return out
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 status = exc.response.status_code
+                try:
+                    self._record_request(status_code=int(status), latency_ms=(time.monotonic() - start) * 1000.0)
+                except Exception:
+                    pass
 
                 if status == 401 and not refreshed_token:
                     logger.info("TDX request unauthorized; refreshing token and retrying.")
@@ -247,6 +309,10 @@ class TdxClient:
                 continue
             except httpx.TransportError as exc:
                 last_exc = exc
+                try:
+                    self._record_request(status_code=0, latency_ms=(time.monotonic() - start) * 1000.0)
+                except Exception:
+                    pass
                 if attempt >= max_attempts:
                     raise
                 delay = min(max_delay_seconds, base_delay_seconds * (2**attempt))
