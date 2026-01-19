@@ -91,6 +91,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+Notes:
+- Compose uses `restart: unless-stopped`, so services come back after reboot if your Docker daemon starts on login.
+- Runtime knobs live in `.env` (see `.env.example`). If you still see frequent `429 Too Many Requests`, increase `TRIPSCORE_TDX_REQUEST_SPACING_SECONDS` and/or `TRIPSCORE_TDX_DAEMON_SLEEP_SECONDS`.
+
 Services:
 - `tripscore-api`: web UI + API on `:${TRIPSCORE_WEB_PORT:-8001}` (host) → `:8000` (container)
 - `tripscore-tdx-daemon`: background ingestion loop (bulk static datasets + continuous availability refresh)
