@@ -147,6 +147,85 @@ function setStatus(message) {
   el("status").textContent = message;
 }
 
+function renderPolicySummary() {
+  const node = el("policy-summary");
+  if (!node) return;
+
+  const resp = state.lastResponse;
+  if (!resp || !Array.isArray(resp.results) || resp.results.length === 0) {
+    node.innerHTML = "";
+    return;
+  }
+
+  const top = resp.results.slice(0, 3);
+  const errors = countTdxErrors(resp.results);
+  const warnings = resp.meta && Array.isArray(resp.meta.warnings) ? resp.meta.warnings : [];
+  const cache = resp.meta && resp.meta.cache ? resp.meta.cache : null;
+
+  const report = state.qualityReport;
+  const qualitySeverity = (report && report.overall && report.overall.severity) || "info";
+  const qualityBadge =
+    qualitySeverity === "error"
+      ? `<span class="badge bad">error</span>`
+      : qualitySeverity === "warning"
+      ? `<span class="badge warn">warning</span>`
+      : `<span class="badge ok">info</span>`;
+
+  const when =
+    resp.query && resp.query.start && resp.query.end ? `${resp.query.start} → ${resp.query.end}` : null;
+
+  const lines = [];
+  lines.push(`<h3>Policy Brief</h3>`);
+  lines.push(
+    `<p class="lead">A decision-focused summary of the current recommendation run${
+      when ? ` for <span class="badge">${escapeHtml(when)}</span>` : ""
+    }.</p>`
+  );
+
+  lines.push("<h4>Executive Summary</h4>");
+  lines.push("<ul>");
+  top.forEach((it, idx) => {
+    const name = it.destination && it.destination.name ? it.destination.name : `Result ${idx + 1}`;
+    const score =
+      it.breakdown && typeof it.breakdown.total_score === "number" ? it.breakdown.total_score : null;
+    const tagCount = it.destination && Array.isArray(it.destination.tags) ? it.destination.tags.length : 0;
+    lines.push(
+      `<li><strong>#${idx + 1}</strong> ${escapeHtml(name)}${
+        score !== null ? ` (score ${Number(score).toFixed(3)})` : ""
+      }${tagCount ? ` · ${tagCount} tags` : ""}</li>`
+    );
+  });
+  lines.push("</ul>");
+
+  lines.push("<h4>Evidence & Data Quality</h4>");
+  lines.push("<ul>");
+  lines.push(`<li>Quality report: ${qualityBadge}</li>`);
+  lines.push(
+    `<li>Transit signal errors in this run: <span class="badge ${
+      errors ? "warn" : "ok"
+    }">${errors}</span></li>`
+  );
+  if (warnings.length) lines.push(`<li>Server warnings: <span class="badge warn">${warnings.length}</span></li>`);
+  if (cache) {
+    const hits = Number(cache.hits) || 0;
+    const misses = Number(cache.misses) || 0;
+    const stale = Number(cache.stale_fallbacks) || 0;
+    lines.push(`<li>Cache: hit ${hits} · miss ${misses} · stale ${stale}</li>`);
+  }
+  lines.push("</ul>");
+
+  lines.push("<h4>Recommended Next Actions</h4>");
+  lines.push("<ul>");
+  lines.push(
+    "<li>Confirm your starting point and time window (small shifts can change accessibility and crowd risk).</li>"
+  );
+  lines.push("<li>If constraints are strict, use presets and re-run to compare scenarios.</li>");
+  lines.push("<li>Open a result to see the structured brief and data limitations.</li>");
+  lines.push("</ul>");
+
+  node.innerHTML = lines.join("");
+}
+
 function setBusy(busy, message) {
   const runBtn = el("run-btn");
   const submitBtn = el("submit");
@@ -900,6 +979,7 @@ function setResultsPayload(payload) {
   });
 
   updateBriefStrip();
+  renderPolicySummary();
   updateView({ selectDefault: true });
 }
 
@@ -1521,6 +1601,7 @@ async function refreshQualityReport() {
     state.qualityReport = null;
   } finally {
     renderCoverage();
+    renderPolicySummary();
   }
 }
 

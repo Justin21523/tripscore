@@ -468,12 +468,13 @@
           <button id="tab-debug" class="tab" type="button" role="tab" aria-selected="false">Data</button>
         </div>
 
-        <div id="panel-results" class="tab-panel active" role="tabpanel" aria-labelledby="tab-results">
-          <div class="panel-subheader">
-            <input id="result-search" type="text" placeholder="Search results…" />
-            <select id="result-sort" title="Sort">
-              <option value="rank" selected>Rank</option>
-              <option value="score_desc">Score (desc)</option>
+	        <div id="panel-results" class="tab-panel active" role="tabpanel" aria-labelledby="tab-results">
+	          <div id="policy-summary" class="policy-summary"></div>
+	          <div class="panel-subheader">
+	            <input id="result-search" type="text" placeholder="Search results…" />
+	            <select id="result-sort" title="Sort">
+	              <option value="rank" selected>Rank</option>
+	              <option value="score_desc">Score (desc)</option>
               <option value="score_asc">Score (asc)</option>
               <option value="name_asc">Name (A→Z)</option>
             </select>
