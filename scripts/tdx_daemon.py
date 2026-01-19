@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tripscore.config.settings import get_settings
 from tripscore.ingestion.tdx_cities import ALL_CITIES
-from tripscore.ingestion.tdx_bulk import DatasetName, bulk_prefetch_all, read_bulk_progress
+from tripscore.ingestion.tdx_bulk import DatasetName, bulk_is_unsupported, bulk_prefetch_all, read_bulk_progress
 from tripscore.ingestion.tdx_client import TdxClient
 from tripscore.core.env import resolve_project_path
 from tripscore.recommender.recommend import build_cache
@@ -107,6 +107,16 @@ def _reset_bulk_for_city(cache_dir: Path, *, city: str) -> None:
         d = base / ds
         if not d.exists():
             continue
+        # Preserve "unsupported" markers so we don't burn quota on known 404s.
+        progress_path = d / f"city_{city}.progress.json"
+        try:
+            if progress_path.exists():
+                payload = json.loads(progress_path.read_text(encoding="utf-8")) or {}
+                if bool(payload.get("unsupported", False)) or payload.get("error_status") == 404:
+                    continue
+        except Exception:
+            pass
+
         for p in d.glob(f"city_{city}.*"):
             try:
                 p.unlink()
@@ -119,6 +129,14 @@ def _reset_bulk_for_metro(cache_dir: Path, *, operators: list[str]) -> None:
     if not base.exists():
         return
     for op in operators:
+        progress_path = base / f"operator_{op}.progress.json"
+        try:
+            if progress_path.exists():
+                payload = json.loads(progress_path.read_text(encoding="utf-8")) or {}
+                if bool(payload.get("unsupported", False)) or payload.get("error_status") == 404:
+                    continue
+        except Exception:
+            pass
         for p in base.glob(f"operator_{op}.*"):
             try:
                 p.unlink()
@@ -266,8 +284,10 @@ def main(argv: list[str] | None = None) -> int:
             last_dyn = int(state.city_last_dynamic_unix.get(city, 0) or 0)
             if now - last_dyn >= int(float(args.dynamic_interval_seconds)):
                 try:
-                    _ = tdx.get_youbike_station_statuses(city=city)
-                    _ = tdx.get_parking_lot_statuses(city=city)
+                    if not bulk_is_unsupported(cache, "bike_stations", f"city_{city}"):
+                        _ = tdx.get_youbike_station_statuses(city=city)
+                    if not bulk_is_unsupported(cache, "parking_lots", f"city_{city}"):
+                        _ = tdx.get_parking_lot_statuses(city=city)
                     state.city_last_dynamic_unix[city] = int(time.time())
                     state.consecutive_429 = 0
                     print(f"[dynamic] city={city} refreshed")

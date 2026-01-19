@@ -67,6 +67,14 @@ def read_bulk_progress(cache: FileCache, dataset: DatasetName, scope: str) -> di
     return payload if isinstance(payload, dict) else {}
 
 
+def bulk_is_unsupported(cache: FileCache, dataset: DatasetName, scope: str) -> bool:
+    """Return True if the bulk progress indicates the dataset is unsupported (usually HTTP 404)."""
+    p = read_bulk_progress(cache, dataset, scope) or {}
+    status = p.get("error_status")
+    status_i = int(status) if isinstance(status, (int, float)) else None
+    return bool(p.get("unsupported", False)) or status_i == 404
+
+
 def _paths(cache: FileCache, dataset: DatasetName, scope: str) -> tuple[Path, Path]:
     base = _bulk_dir(cache) / dataset
     return base / f"{scope}.json", base / f"{scope}.progress.json"
@@ -158,23 +166,31 @@ def bulk_fetch_paged_odata(
         try:
             page = tdx_client._tdx_get_json(endpoint, params=params)
         except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
+            status = int(exc.response.status_code)
+
+            # Persist a status snapshot so offline tools can show rate-limit/unsupported visibility.
+            prev_errors = int(progress.get("error_count", 0) or 0)
+            progress.update(
+                {
+                    "dataset": dataset,
+                    "scope": scope,
+                    "next_skip": next_skip,
+                    "top": int(top),
+                    "done": bool(done),
+                    "error_status": status,
+                    "error": str(exc),
+                    "error_count": prev_errors + 1,
+                    "last_error_at_unix": int(time.time()),
+                    "updated_at_unix": int(time.time()),
+                }
+            )
+
             if status == 404:
                 done = True
+                progress["done"] = True
+                progress["unsupported"] = True
                 _write_json(data_path, existing)
-                _write_json(
-                    progress_path,
-                    {
-                        "dataset": dataset,
-                        "scope": scope,
-                        "next_skip": next_skip,
-                        "top": int(top),
-                        "done": True,
-                        "error_status": status,
-                        "error": str(exc),
-                        "updated_at_unix": int(time.time()),
-                    },
-                )
+                _write_json(progress_path, progress)
                 return BulkFetchResult(
                     dataset=dataset,
                     scope=scope,
@@ -186,6 +202,9 @@ def bulk_fetch_paged_odata(
                     data_path=data_path,
                     progress_path=progress_path,
                 )
+
+            _write_json(data_path, existing)
+            _write_json(progress_path, progress)
             raise
         if not isinstance(page, list):
             raise RuntimeError("Unexpected TDX response shape; expected a list.")

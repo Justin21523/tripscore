@@ -332,6 +332,29 @@ class TdxClient:
 
         try:
             raw = self._fetch_paged_list(endpoint, top=top, select=select)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                record_ingestion_source(
+                    source_name,
+                    {"mode": "unsupported", "dataset": dataset, "scope": scope, "error_status": 404},
+                )
+                return []
+            stale = self._cache.get_stale("tdx", cache_key)
+            if isinstance(stale, list):
+                meta = self._cache.get_entry_meta("tdx", cache_key) or {}
+                record_ingestion_source(
+                    source_name,
+                    {
+                        "mode": "stale",
+                        "dataset": dataset,
+                        "scope": scope,
+                        "as_of_unix": meta.get("created_at_unix"),
+                        "ttl_seconds": meta.get("ttl_seconds"),
+                    },
+                )
+                return stale
+            record_ingestion_source(source_name, {"mode": "none", "dataset": dataset, "scope": scope})
+            raise
         except httpx.HTTPError:
             stale = self._cache.get_stale("tdx", cache_key)
             if isinstance(stale, list):
@@ -950,6 +973,17 @@ class TdxClient:
             key_field="ParkingLotUID",
             ttl_seconds=self._settings.ingestion.tdx.cache_ttl_seconds,
         )
+
+        # If the city doesn't support parking lots, avoid calling the availability endpoint.
+        try:
+            from tripscore.ingestion.tdx_bulk import bulk_is_unsupported
+
+            if not raw_lots and bulk_is_unsupported(self._cache, "parking_lots", f"city_{city}"):
+                record_ingestion_source(f"tdx:parking:city_{city}", {"mode": "unsupported", "city": city})
+                return []
+        except Exception:
+            pass
+
         raw_availability = self._get_raw_list(
             dataset="parking_availability",
             scope=f"city_{city}",

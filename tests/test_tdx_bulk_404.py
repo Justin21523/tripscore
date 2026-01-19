@@ -32,6 +32,7 @@ def test_bulk_fetch_marks_404_done(tmp_path):
         encoding="utf-8"
     )
     assert '"error_status": 404' in progress
+    assert '"unsupported": true' in progress
 
 
 def test_bulk_fetch_non_404_propagates(tmp_path):
@@ -56,4 +57,3 @@ def test_bulk_fetch_non_404_propagates(tmp_path):
             max_seconds=None,
             reset=True,
         )
-
