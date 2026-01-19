@@ -133,12 +133,12 @@ def _reset_bulk_for_city(cache_dir: Path, *, city: str) -> None:
         d = base / ds
         if not d.exists():
             continue
-        # Preserve "unsupported" markers so we don't burn quota on known 404s.
+        # Preserve "unsupported" markers so we don't burn quota on known unsupported cities/datasets.
         progress_path = d / f"city_{city}.progress.json"
         try:
             if progress_path.exists():
                 payload = json.loads(progress_path.read_text(encoding="utf-8")) or {}
-                if bool(payload.get("unsupported", False)) or payload.get("error_status") == 404:
+                if bool(payload.get("unsupported", False)) or payload.get("error_status") in {404, 400}:
                     continue
         except Exception:
             pass
@@ -159,7 +159,7 @@ def _reset_bulk_for_metro(cache_dir: Path, *, operators: list[str]) -> None:
         try:
             if progress_path.exists():
                 payload = json.loads(progress_path.read_text(encoding="utf-8")) or {}
-                if bool(payload.get("unsupported", False)) or payload.get("error_status") == 404:
+                if bool(payload.get("unsupported", False)) or payload.get("error_status") in {404, 400}:
                     continue
         except Exception:
             pass

@@ -68,11 +68,11 @@ def read_bulk_progress(cache: FileCache, dataset: DatasetName, scope: str) -> di
 
 
 def bulk_is_unsupported(cache: FileCache, dataset: DatasetName, scope: str) -> bool:
-    """Return True if the bulk progress indicates the dataset is unsupported (usually HTTP 404)."""
+    """Return True if the bulk progress indicates the dataset is unsupported (typically HTTP 404/400)."""
     p = read_bulk_progress(cache, dataset, scope) or {}
     status = p.get("error_status")
     status_i = int(status) if isinstance(status, (int, float)) else None
-    return bool(p.get("unsupported", False)) or status_i == 404
+    return bool(p.get("unsupported", False)) or status_i in {404, 400}
 
 
 def _paths(cache: FileCache, dataset: DatasetName, scope: str) -> tuple[Path, Path]:
@@ -185,10 +185,12 @@ def bulk_fetch_paged_odata(
                 }
             )
 
-            if status == 404:
+            unsupported_by_status = status == 404 or (status == 400 and dataset in {"bike_stations", "bike_availability"})
+            if unsupported_by_status:
                 done = True
                 progress["done"] = True
                 progress["unsupported"] = True
+                progress["unsupported_reason"] = "http_404" if status == 404 else "http_400"
                 _write_json(data_path, existing)
                 _write_json(progress_path, progress)
                 return BulkFetchResult(
