@@ -11,7 +11,7 @@ cache:
 
 catalog:
   path: data/catalogs/destinations.json
-  details_path: null
+  details_path: data/catalogs/destination_details.json
 
 ingestion:
   tdx:

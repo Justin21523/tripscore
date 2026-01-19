@@ -53,6 +53,18 @@ pip install -r requirements-notebooks.txt
 jupyter lab
 ```
 
+## POI details (opening hours, address, phone)
+
+TripScore can optionally merge extra POI metadata from a local details file:
+
+- Config: `catalog.details_path` (default: `data/catalogs/destination_details.json`)
+- Format: JSON object mapping `destination_id -> {address, phone, opening_hours, url, description, city, district}`
+
+Tools:
+
+- Import from CSV/JSON: `PYTHONPATH=src python scripts/poi_details_import.py --in-csv your.csv`
+- Open-data enrichment (OSM/Nominatim, network + polite rate limits): `PYTHONPATH=src python scripts/poi_details_enrich_osm.py --only-missing`
+
 ## Run (CLI)
 
 ```bash
