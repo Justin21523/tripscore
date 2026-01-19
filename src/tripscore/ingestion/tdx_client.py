@@ -1240,6 +1240,36 @@ class TdxClient:
             except Exception:
                 continue
 
+        # Optional local enrichment (offline): `data/catalogs/parking_details.json`
+        try:
+            import json
+
+            from tripscore.core.env import resolve_project_path
+
+            p = resolve_project_path("data/catalogs/parking_details.json")
+            if p.exists():
+                extra = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(extra, dict) and extra:
+                    updated: list[ParkingLotStatus] = []
+                    for lot in lots:
+                        e = extra.get(lot.parking_lot_uid) if isinstance(extra, dict) else None
+                        if not isinstance(e, dict):
+                            updated.append(lot)
+                            continue
+                        upd = {}
+                        if isinstance(e.get("address"), str) and e["address"].strip():
+                            upd["address"] = e["address"].strip()
+                        if isinstance(e.get("service_time"), str) and e["service_time"].strip():
+                            upd["service_time"] = e["service_time"].strip()
+                        if isinstance(e.get("fare_description"), str) and e["fare_description"].strip():
+                            upd["fare_description"] = e["fare_description"].strip()
+                        if isinstance(e.get("total_spaces"), int):
+                            upd["total_spaces"] = int(e["total_spaces"])
+                        updated.append(lot if not upd else lot.__class__(**{**lot.__dict__, **upd}))
+                    lots = updated
+        except Exception:
+            pass
+
         if not lots:
             logger.warning("TDX returned 0 parking lots after parsing; continuing with empty list.")
         return lots

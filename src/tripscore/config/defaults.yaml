@@ -45,7 +45,7 @@ ingestion:
       select: StationUID,StationName,StationPosition
     parking_lots:
       top: 1000
-      select: ParkingLotUID,ParkingLotName,ParkingLotPosition,TotalSpaces
+      select: ParkingLotUID,ParkingLotName,ParkingLotPosition,TotalSpaces,ParkingLotAddress,ServiceTime,FareDescription
     parking_availability:
       top: 1000
       select: ParkingLotUID,AvailableSpaces,TotalSpaces

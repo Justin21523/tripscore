@@ -745,28 +745,38 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "btn btn-small";
-          btn.textContent = "Show stops for top route";
+          btn.textContent = "Show ETAs for top route (sample)";
           btn.addEventListener("click", async () => {
             try {
               btn.disabled = true;
-              btn.textContent = "Loading stops…";
+              btn.textContent = "Loading route ETAs…";
               const resp = await fetchJson(
-                `/api/tdx/bus/stop_of_route?city=${encodeURIComponent(dest.city || "")}&route_uid=${encodeURIComponent(
+                `/api/tdx/bus/eta/route?city=${encodeURIComponent(dest.city || "")}&route_uid=${encodeURIComponent(
                   top.route_uid
-                )}${top.direction !== null && top.direction !== undefined ? `&direction=${encodeURIComponent(String(top.direction))}` : ""}`
+                )}${top.direction !== null && top.direction !== undefined ? `&direction=${encodeURIComponent(String(top.direction))}` : ""}&lat=${encodeURIComponent(String(dest.location.lat))}&lon=${encodeURIComponent(String(dest.location.lon))}&radius_m=900&max_stops=10&max_rows=60`
               );
-              const stops = (resp && resp.stops) || [];
-              const list = document.createElement("ul");
-              stops.slice(0, 24).forEach((s) => {
-                const li = document.createElement("li");
-                li.textContent = `${s.sequence !== null && s.sequence !== undefined ? `${s.sequence}. ` : ""}${s.stop_name || s.stop_uid}`;
-                list.appendChild(li);
-              });
+              const eta2 = (resp && resp.eta) || [];
+              const stops2 = (resp && resp.stops) || [];
+
               busEtaBody.appendChild(document.createElement("hr"));
               const h2 = document.createElement("h4");
-              h2.textContent = "Stops (sample)";
+              h2.textContent = "Top route ETAs (sample)";
               busEtaBody.appendChild(h2);
-              busEtaBody.appendChild(list);
+              if (stops2.length) {
+                const p = document.createElement("p");
+                p.className = "muted";
+                p.textContent = `Stops considered: ${stops2.length}.`;
+                busEtaBody.appendChild(p);
+              }
+              const ul3 = document.createElement("ul");
+              eta2.slice(0, 12).forEach((e) => {
+                const li = document.createElement("li");
+                const stop = e.stop_name ? `@ ${e.stop_name}` : "";
+                const route = e.route_name || e.route_uid || "route";
+                li.textContent = `${formatSecondsShort(e.estimate_seconds)} · ${route} ${stop}`;
+                ul3.appendChild(li);
+              });
+              busEtaBody.appendChild(ul3);
               btn.remove();
             } catch (e) {
               btn.textContent = `Stops unavailable: ${e.message}`;

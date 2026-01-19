@@ -125,6 +125,24 @@ PYTHONPATH=src python scripts/poi_details_import.py --in-csv your_details.csv --
 PYTHONPATH=src python scripts/poi_details_validate.py
 ```
 
+## Parking Details Import (local file)
+
+If a city’s TDX parking schema is missing `service_time` / `fare_description`, you can enrich locally via:
+
+```bash
+PYTHONPATH=src python scripts/parking_details_import.py --in-csv your_parking_details.csv --id-field parking_lot_uid
+```
+
+This writes `data/catalogs/parking_details.json` (merged by `ParkingLotUID`).
+
+## Catalog Import (open data)
+
+To add new destinations from local open data (CSV/JSON), use:
+
+```bash
+PYTHONPATH=src python scripts/catalog_import.py --in-csv your_pois.csv
+```
+
 ## Always-On (Linux)
 
 Optional systemd user service example: `docs/systemd/README.md:1`.
