@@ -94,6 +94,7 @@ docker compose up -d --build
 Notes:
 - Compose uses `restart: unless-stopped`, so services come back after reboot if your Docker daemon starts on login.
 - Runtime knobs live in `.env` (see `.env.example`). If you still see frequent `429 Too Many Requests`, increase `TRIPSCORE_TDX_REQUEST_SPACING_SECONDS` and/or `TRIPSCORE_TDX_DAEMON_SLEEP_SECONDS`.
+- Compose enables Docker log rotation (`json-file` with `max-size`/`max-file`) to avoid unbounded disk growth.
 
 Services:
 - `tripscore-api`: web UI + API on `:${TRIPSCORE_WEB_PORT:-8001}` (host) → `:8000` (container)
@@ -122,6 +123,19 @@ For fields like `opening_hours`, `address`, and `url`, use the local details fil
 ```bash
 PYTHONPATH=src python scripts/poi_details_import.py --in-csv your_details.csv --id-field id
 PYTHONPATH=src python scripts/poi_details_validate.py
+```
+
+## Always-On (Linux)
+
+Optional systemd user service example: `docs/systemd/README.md:1`.
+
+## Cache Management
+
+If disk usage grows too much, you can safely remove bulk artifacts and let the daemon rebuild them:
+
+```bash
+rm -rf .cache/tripscore/tdx_bulk
+rm -rf .cache/tripscore/tdx_daemon
 ```
 
 ## Web Controls (Editor Mode)

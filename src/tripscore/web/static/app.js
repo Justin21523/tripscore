@@ -306,6 +306,39 @@ function buildPolicyBrief(item) {
     }
   });
   if (tdxErrs.length) risks.push(`Transit data degraded (${tdxErrs.length} signals): ${tdxErrs.slice(0, 2).join(" · ")}`);
+
+  // Global data quality hints (offline coverage + daemon metrics).
+  try {
+    const report = state.qualityReport;
+    const cov = report && report.tdx && report.tdx.bulk_coverage;
+    const worst = report && report.overall && report.overall.severity;
+    if (worst === "error") risks.push("Data quality report indicates errors; some signals may be missing or outdated.");
+    if (worst === "warning") risks.push("Data quality report indicates warnings; some datasets may be incomplete.");
+
+    const d = state.tdxStatus && state.tdxStatus.daemon && state.tdxStatus.daemon.daemon;
+    if (d && d.global_cooldown_until_unix) {
+      const now = Math.floor(Date.now() / 1000);
+      if (now < Number(d.global_cooldown_until_unix)) risks.push("TDX is in cooldown due to upstream rate limits; real-time signals may be delayed.");
+    }
+
+    if (cov && cov.summary && cov.summary.by_city && dest && dest.city) {
+      const normalize = (s) => String(s || "").toLowerCase().replaceAll(" ", "").replaceAll("_", "");
+      const want = normalize(dest.city);
+      const byCity = cov.summary.by_city || {};
+      let match = null;
+      Object.keys(byCity).forEach((c) => {
+        if (!match && normalize(c) === want) match = c;
+      });
+      if (match) {
+        const st = byCity[match] || {};
+        const inc = Number(st.incomplete || 0) + Number(st.missing || 0);
+        const rl = Number(st.error_429 || 0);
+        if (inc > 0 || rl > 0) risks.push(`TDX bulk coverage for ${match} is still in progress (incomplete/missing ${inc}, 429 ${rl}).`);
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
   const wx = byName.weather;
   if (wx && wx.details) {
     if (wx.details.max_precipitation_probability === null) risks.push("Rain probability unavailable (weather is more uncertain).");
