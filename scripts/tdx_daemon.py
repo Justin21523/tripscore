@@ -73,9 +73,32 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--static-pages-per-run", type=int, default=1, help="Bulk pages per dataset per city per cycle.")
     p.add_argument("--static-seconds-per-run", type=float, default=20.0, help="Bulk time budget per city per cycle.")
     p.add_argument("--dynamic-refresh", action="store_true", help="Continuously refresh dynamic datasets.")
+    p.add_argument("--request-spacing-seconds", type=float, default=None, help="Override TDX request spacing.")
+    p.add_argument("--retry-max-attempts", type=int, default=None, help="Override retry max attempts.")
+    p.add_argument("--bulk-max-pages-per-call", type=int, default=None, help="Override bulk pages per call.")
+    p.add_argument("--bulk-max-seconds-per-call", type=float, default=None, help="Override bulk seconds per call.")
     args = p.parse_args(argv)
 
     settings = get_settings()
+    # Optional runtime overrides (do not persist to YAML).
+    tdx_settings = settings.ingestion.tdx
+    updates: dict = {}
+    if args.request_spacing_seconds is not None:
+        updates["request_spacing_seconds"] = float(args.request_spacing_seconds)
+    if args.retry_max_attempts is not None:
+        updates["retry"] = tdx_settings.retry.model_copy(update={"max_attempts": int(args.retry_max_attempts)})
+    if args.bulk_max_pages_per_call is not None or args.bulk_max_seconds_per_call is not None:
+        b = tdx_settings.bulk
+        b_updates = {}
+        if args.bulk_max_pages_per_call is not None:
+            b_updates["max_pages_per_call"] = int(args.bulk_max_pages_per_call)
+        if args.bulk_max_seconds_per_call is not None:
+            b_updates["max_seconds_per_call"] = float(args.bulk_max_seconds_per_call)
+        updates["bulk"] = b.model_copy(update=b_updates)
+    if updates:
+        tdx_settings = tdx_settings.model_copy(update=updates)
+        ingestion = settings.ingestion.model_copy(update={"tdx": tdx_settings})
+        settings = settings.model_copy(update={"ingestion": ingestion})
     cache = build_cache(settings)
     tdx = TdxClient(settings, cache)
     operators = list(settings.ingestion.tdx.metro_stations.operators)
@@ -120,4 +143,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

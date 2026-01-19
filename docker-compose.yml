@@ -2,8 +2,9 @@ services:
   api:
     build: .
     container_name: tripscore-api
+    user: "${TRIPSCORE_DOCKER_UID:-1000}:${TRIPSCORE_DOCKER_GID:-1000}"
     ports:
-      - "8000:8000"
+      - "${TRIPSCORE_WEB_PORT:-8001}:8000"
     env_file:
       - .env
     environment:
@@ -17,6 +18,7 @@ services:
   tdx-daemon:
     build: .
     container_name: tripscore-tdx-daemon
+    user: "${TRIPSCORE_DOCKER_UID:-1000}:${TRIPSCORE_DOCKER_GID:-1000}"
     env_file:
       - .env
     environment:
@@ -31,14 +33,21 @@ services:
         "all",
         "--dynamic-refresh",
         "--sleep-seconds",
-        "2.0",
+        "3.0",
+        "--request-spacing-seconds",
+        "0.2",
+        "--retry-max-attempts",
+        "3",
+        "--bulk-max-pages-per-call",
+        "1",
+        "--bulk-max-seconds-per-call",
+        "12.0",
         "--static-pages-per-run",
         "1",
         "--static-seconds-per-run",
-        "20.0",
+        "12.0",
       ]
     volumes:
       - ./.cache/tripscore:/app/.cache/tripscore
       - ./data:/app/data
     restart: unless-stopped
-

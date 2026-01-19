@@ -92,7 +92,7 @@ docker compose up -d --build
 ```
 
 Services:
-- `tripscore-api`: web UI + API on `:8000`
+- `tripscore-api`: web UI + API on `:${TRIPSCORE_WEB_PORT:-8001}` (host) → `:8000` (container)
 - `tripscore-tdx-daemon`: background ingestion loop (bulk static datasets + continuous availability refresh)
 
 Useful checks:
@@ -100,13 +100,16 @@ Useful checks:
 ```bash
 docker compose ps
 docker compose logs -f tdx-daemon
-curl -s http://127.0.0.1:8000/api/quality/report | jq .
-curl -s http://127.0.0.1:8000/api/tdx/status | jq .
+curl -s http://127.0.0.1:${TRIPSCORE_WEB_PORT:-8001}/api/quality/report | jq .
+curl -s http://127.0.0.1:${TRIPSCORE_WEB_PORT:-8001}/api/tdx/status | jq .
 ```
 
 Data persistence:
 - cache persists in `./.cache/tripscore/` (mounted into containers)
 - catalog/details persist in `./data/` (mounted into containers)
+
+If you see `PermissionError` writing to `./.cache/tripscore`, set:
+- `TRIPSCORE_DOCKER_UID` / `TRIPSCORE_DOCKER_GID` in `.env` to match `id -u` / `id -g`
 
 ## Web Controls (Editor Mode)
 - Move origin: drag the origin marker, enable “Pick origin” then click the map, or use the D‑pad / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>.
