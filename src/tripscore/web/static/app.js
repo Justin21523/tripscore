@@ -119,6 +119,7 @@ const state = {
   headingDeg: 0,
   activeTab: "results",
   showLines: false,
+  mapLayers: { bus: false, bike: false, metro: false, parking: false },
   settings: null,
   serverPresets: {},
   customPresets: {},
@@ -135,6 +136,8 @@ const state = {
   routeLines: [],
   destMarkers: {},
   markerGroup: null,
+  overlayGroups: { bus: null, bike: null, metro: null, parking: null },
+  overlayLastKey: { bus: null, bike: null, metro: null, parking: null },
   activeSetupStep: "step-1",
   tdxStatus: null,
   qualityReport: null,
@@ -400,19 +403,21 @@ function buildPolicyBrief(item) {
       if (now < Number(d.global_cooldown_until_unix)) risks.push("TDX is in cooldown due to upstream rate limits; real-time signals may be delayed.");
     }
 
-    if (cov && cov.summary && cov.summary.by_city && dest && dest.city) {
-      const normalize = (s) => String(s || "").toLowerCase().replaceAll(" ", "").replaceAll("_", "");
-      const want = normalize(dest.city);
-      const byCity = cov.summary.by_city || {};
-      let match = null;
-      Object.keys(byCity).forEach((c) => {
-        if (!match && normalize(c) === want) match = c;
-      });
-      if (match) {
-        const st = byCity[match] || {};
-        const inc = Number(st.incomplete || 0) + Number(st.missing || 0);
-        const rl = Number(st.error_429 || 0);
-        if (inc > 0 || rl > 0) risks.push(`TDX bulk coverage for ${match} is still in progress (incomplete/missing ${inc}, 429 ${rl}).`);
+    const tdxCity = deepGet(item, ["meta", "data_completeness", "tdx_city"]);
+    if (cov && tdxCity && Array.isArray(cov.rows)) {
+      const scope = `city_${tdxCity}`;
+      const relevant = cov.rows.filter((r) => r && r.scope === scope && ["bus_stops", "bus_routes", "bike_stations", "parking_lots"].includes(r.dataset));
+      if (relevant.length) {
+        const missing = relevant.filter((r) => Boolean(r.missing)).length;
+        const unsupported = relevant.filter((r) => Boolean(r.unsupported)).length;
+        const err429 = relevant.filter((r) => Number(r.error_status) === 429).length;
+        const errOther = relevant.filter((r) => r.error_status && Number(r.error_status) !== 404 && Number(r.error_status) !== 429).length;
+        const incomplete = relevant.filter((r) => !r.done && !r.missing && !r.unsupported && !r.error_status).length;
+        if (missing || incomplete || err429 || errOther) {
+          risks.push(
+            `TDX bulk coverage for ${tdxCity}: missing ${missing}, incomplete ${incomplete}, 429 ${err429}, other errors ${errOther}, unsupported ${unsupported}.`
+          );
+        }
       }
     }
   } catch (_) {
@@ -495,8 +500,133 @@ function ensureMap(originLat, originLon) {
     updateOrigin(evt.latlng.lat, evt.latlng.lng, { center: false, source: "map_click" });
   });
 
+  let overlayTimer = null;
+  const scheduleOverlayRefresh = () => {
+    if (overlayTimer) clearTimeout(overlayTimer);
+    overlayTimer = setTimeout(() => refreshAllOverlays(), 250);
+  };
+  m.on("moveend", scheduleOverlayRefresh);
+  m.on("zoomend", scheduleOverlayRefresh);
+
   state.map = m;
   return m;
+}
+
+function currentTdxCityContext() {
+  const fromUi = String((el("context-city") && el("context-city").value) || "").trim();
+  if (fromUi) return fromUi;
+  if (state.tdxStatus && state.tdxStatus.city) return String(state.tdxStatus.city);
+  if (state.settings && state.settings.ingestion && state.settings.ingestion.tdx && state.settings.ingestion.tdx.city)
+    return String(state.settings.ingestion.tdx.city);
+  return "Taipei";
+}
+
+function dotIcon(color) {
+  if (!window.L) return null;
+  return L.divIcon({
+    className: "dot-marker",
+    html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};border:2px solid rgba(0,0,0,0.35)"></div>`,
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
+    popupAnchor: [0, -6],
+  });
+}
+
+function ensureOverlayGroup(kind) {
+  const m = state.map;
+  if (!m) return null;
+  if (state.overlayGroups[kind]) return state.overlayGroups[kind];
+  const useCluster = Boolean(window.L && window.L.markerClusterGroup);
+  const group = useCluster ? L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 48 }) : L.layerGroup();
+  state.overlayGroups[kind] = group;
+  return group;
+}
+
+async function refreshOverlay(kind) {
+  const m = state.map;
+  if (!m) return;
+  if (!state.mapLayers[kind]) return;
+  const group = ensureOverlayGroup(kind);
+  if (!group) return;
+
+  const bounds = m.getBounds();
+  const bbox = {
+    min_lat: bounds.getSouth(),
+    max_lat: bounds.getNorth(),
+    min_lon: bounds.getWest(),
+    max_lon: bounds.getEast(),
+  };
+  const round3 = (x) => Number(x).toFixed(3);
+  const city = currentTdxCityContext();
+  const key = `${kind}:${city}:${round3(bbox.min_lat)}:${round3(bbox.min_lon)}:${round3(bbox.max_lat)}:${round3(
+    bbox.max_lon
+  )}`;
+  if (state.overlayLastKey[kind] === key) return;
+  state.overlayLastKey[kind] = key;
+
+  const qs = (obj) =>
+    Object.entries(obj)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join("&");
+
+  try {
+    if (group.clearLayers) group.clearLayers();
+    const colors = { bus: "#4f46e5", bike: "#10b981", metro: "#f59e0b", parking: "#ef4444" };
+    const color = colors[kind] || "#94a3b8";
+    let payload;
+    if (kind === "bus") {
+      payload = await fetchJson(`/api/tdx/bus/stops/bulk?${qs({ city, ...bbox, limit: 8000 })}`);
+      (payload.stops || []).forEach((s) => {
+        const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
+        marker.bindTooltip(`${s.name || "bus stop"}`, { direction: "top", opacity: 0.9 });
+        group.addLayer(marker);
+      });
+    } else if (kind === "bike") {
+      payload = await fetchJson(`/api/tdx/bike/stations/bulk?${qs({ city, ...bbox, limit: 6000 })}`);
+      (payload.stations || []).forEach((s) => {
+        const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
+        marker.bindTooltip(`${s.name || "bike station"}`, { direction: "top", opacity: 0.9 });
+        group.addLayer(marker);
+      });
+    } else if (kind === "parking") {
+      payload = await fetchJson(`/api/tdx/parking/lots/bulk?${qs({ city, ...bbox, limit: 6000 })}`);
+      (payload.lots || []).forEach((p) => {
+        const marker = L.marker([p.lat, p.lon], { icon: dotIcon(color) });
+        marker.bindTooltip(`${p.name || "parking"}`, { direction: "top", opacity: 0.9 });
+        group.addLayer(marker);
+      });
+    } else if (kind === "metro") {
+      payload = await fetchJson(`/api/tdx/metro/stations/bulk`);
+      (payload.stations || []).forEach((s) => {
+        const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
+        marker.bindTooltip(`${s.name || "metro"} (${s.operator || ""})`.trim(), { direction: "top", opacity: 0.9 });
+        group.addLayer(marker);
+      });
+    }
+    if (!m.hasLayer(group)) group.addTo(m);
+  } catch (_) {
+    // ignore (offline / missing bulk / unsupported)
+  }
+}
+
+function refreshAllOverlays() {
+  if (!state.map) return;
+  ["bus", "bike", "metro", "parking"].forEach((k) => {
+    if (state.mapLayers[k]) refreshOverlay(k);
+  });
+}
+
+function setLayerEnabled(kind, enabled) {
+  state.mapLayers[kind] = Boolean(enabled);
+  saveUiState();
+  const m = state.map;
+  const group = enabled ? ensureOverlayGroup(kind) : state.overlayGroups[kind];
+  if (m && group) {
+    if (enabled) group.addTo(m);
+    else group.remove();
+  }
+  if (enabled) refreshOverlay(kind);
 }
 
 function clearMarkers() {
@@ -662,6 +792,58 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
   if (sub.childNodes.length) inspector.appendChild(sub);
   if ((dest.tags || []).length > 0) inspector.appendChild(tags);
   if (dest.url) inspector.appendChild(link);
+
+  const dq = document.createElement("div");
+  dq.className = "story";
+  const dqTitle = document.createElement("h3");
+  dqTitle.textContent = "Data quality & availability";
+  const dqLead = document.createElement("p");
+  dqLead.textContent = "Shows which datasets were available for scoring, and whether bulk coverage is complete for the relevant city.";
+  dq.appendChild(dqTitle);
+  dq.appendChild(dqLead);
+
+  const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
+  const tdxCity = dc && dc.tdx_city ? String(dc.tdx_city) : "";
+  const ulDq = document.createElement("ul");
+  if (tdxCity) ulDq.appendChild(Object.assign(document.createElement("li"), { textContent: `TDX city context: ${tdxCity}` }));
+  if (dc) {
+    ulDq.appendChild(Object.assign(document.createElement("li"), { textContent: `Used in scoring: bus_stops=${dc.tdx_bus_stops ? "yes" : "no"}, bike=${dc.tdx_bike ? "yes" : "no"}, metro=${dc.tdx_metro ? "yes" : "no"}, parking=${dc.tdx_parking ? "yes" : "no"}, weather=${dc.weather ? "yes" : "no"}` }));
+  }
+
+  try {
+    const cov = state.qualityReport && state.qualityReport.tdx && state.qualityReport.tdx.bulk_coverage;
+    const rows = cov && Array.isArray(cov.rows) ? cov.rows : [];
+    const scope = tdxCity ? `city_${tdxCity}` : null;
+    const statusLine = (dataset) => {
+      if (!scope) return null;
+      const r = rows.find((x) => x && x.dataset === dataset && x.scope === scope) || null;
+      if (!r) return `${dataset}: unknown`;
+      if (r.unsupported) return `${dataset}: unsupported`;
+      if (r.missing) return `${dataset}: missing`;
+      if (r.error_status) return `${dataset}: error ${r.error_status}`;
+      if (r.done) return `${dataset}: done`;
+      return `${dataset}: in progress`;
+    };
+    if (tdxCity) {
+      ["bus_stops", "bus_routes", "bike_stations", "parking_lots"].forEach((ds) => {
+        const line = statusLine(ds);
+        if (!line) return;
+        ulDq.appendChild(Object.assign(document.createElement("li"), { textContent: `Bulk coverage (${tdxCity}): ${line}` }));
+      });
+    }
+
+    const d = state.tdxStatus && state.tdxStatus.daemon && state.tdxStatus.daemon.daemon;
+    if (d && d.global_cooldown_until_unix) {
+      const now = Math.floor(Date.now() / 1000);
+      if (now < Number(d.global_cooldown_until_unix)) {
+        ulDq.appendChild(Object.assign(document.createElement("li"), { textContent: "Real-time signals: TDX is currently in cooldown due to upstream rate limits." }));
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+  dq.appendChild(ulDq);
+  inspector.appendChild(dq);
 
   const story = document.createElement("div");
   story.className = "story";
@@ -1006,6 +1188,7 @@ function buildResultListItem(item, { rank }) {
 
   const dest = item.destination;
   const breakdown = item.breakdown;
+  const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
 
   const title = document.createElement("div");
   title.className = "result-title";
@@ -1022,7 +1205,28 @@ function buildResultListItem(item, { rank }) {
 
   const meta = document.createElement("div");
   meta.className = "result-meta";
-  meta.textContent = `${dest.city || ""} ${dest.district || ""}`.trim();
+  const loc = `${dest.city || ""} ${dest.district || ""}`.trim();
+  meta.textContent = loc;
+
+  const makeBadge = (text, cls) => {
+    const b = document.createElement("span");
+    b.className = `badge ${cls || ""}`.trim();
+    b.textContent = text;
+    return b;
+  };
+
+  if (dc && dc.tdx_city) {
+    if (loc) meta.appendChild(document.createTextNode(" · "));
+    meta.appendChild(makeBadge(`TDX ${dc.tdx_city}`, ""));
+  }
+
+  const degraded = item.breakdown && item.breakdown.components
+    ? item.breakdown.components.some((c) => c.details && c.details.tdx_errors && Object.keys(c.details.tdx_errors || {}).length)
+    : false;
+  if (degraded) {
+    meta.appendChild(document.createTextNode(" "));
+    meta.appendChild(makeBadge("degraded", "warn"));
+  }
 
   const comps = document.createElement("div");
   comps.className = "components";
@@ -1321,6 +1525,8 @@ function buildPreferencesPayload() {
   const presetSelection = el("preset").value || "";
   const presetName = presetSelection && state.serverPresets[presetSelection] ? presetSelection : null;
 
+  const contextCity = String((el("context-city") && el("context-city").value) || "").trim();
+
   const payload = {
     origin: { lat: originLat, lon: originLon },
     time_window: { start: startIso, end: endIso },
@@ -1354,7 +1560,14 @@ function buildPreferencesPayload() {
 
   const expert = parseExpertOverrides();
   const advanced = buildAdvancedOverrides();
-  payload.settings_overrides = expert || advanced;
+  let overrides = expert || advanced;
+  if (contextCity) {
+    if (!overrides) overrides = {};
+    overrides.ingestion = overrides.ingestion || {};
+    overrides.ingestion.tdx = overrides.ingestion.tdx || {};
+    if (!overrides.ingestion.tdx.city) overrides.ingestion.tdx.city = contextCity;
+  }
+  payload.settings_overrides = overrides ? pruneEmpty(overrides) : null;
 
   return payload;
 }
@@ -1389,6 +1602,7 @@ function saveUiState() {
     moveStepM: state.moveStepM,
     headingDeg: state.headingDeg,
     showLines: state.showLines,
+    mapLayers: state.mapLayers,
     activeTab: state.activeTab,
     activeSetupStep: state.activeSetupStep,
   };
@@ -1412,6 +1626,14 @@ function loadUiState() {
     state.moveStepM = Number(ui.moveStepM) || 50;
     state.headingDeg = Number(ui.headingDeg) || 0;
     state.showLines = Boolean(ui.showLines);
+    if (ui.mapLayers && typeof ui.mapLayers === "object") {
+      state.mapLayers = {
+        bus: Boolean(ui.mapLayers.bus),
+        bike: Boolean(ui.mapLayers.bike),
+        metro: Boolean(ui.mapLayers.metro),
+        parking: Boolean(ui.mapLayers.parking),
+      };
+    }
     state.activeTab = ui.activeTab || "results";
     state.activeSetupStep = ui.activeSetupStep || "step-1";
   } catch (_) {
@@ -1446,9 +1668,11 @@ function updateBriefStrip() {
   const preset = el("preset").value || "";
   const goal = preset ? preset : "Custom";
   const topn = numberValue("top-n");
+  const cityContext = String((el("context-city") && el("context-city").value) || state.tdxStatus?.city || "").trim();
 
   el("brief-when").textContent = `When: ${when}`;
   el("brief-from").textContent = `From: ${from}`;
+  if (el("brief-city")) el("brief-city").textContent = `City: ${cityContext || "—"}`;
   el("brief-goal").textContent = `Goal: ${goal}`;
   el("brief-topn").textContent = `Top N: ${topn || "—"}`;
 
@@ -1476,6 +1700,9 @@ function updateBriefStrip() {
     const tdxm = daemon && daemon.tdx_client;
     if (tdxm && tdxm.last_success_unix) parts.push(`tdx ok ${formatUnix(tdxm.last_success_unix)}`);
     if (tdxm && typeof tdxm.requests_per_hour === "number") parts.push(`req/h ${tdxm.requests_per_hour}`);
+    if (tdxm && tdxm.status_counts && typeof tdxm.status_counts === "object" && tdxm.status_counts["429"]) {
+      parts.push(`429 ${Number(tdxm.status_counts["429"]) || 0}`);
+    }
 
     const d = daemon && daemon.daemon;
     if (d && d.global_cooldown_until_unix) {
@@ -1740,6 +1967,61 @@ async function loadTdxCities() {
     });
   } catch (_) {
     // ignore
+  }
+}
+
+async function loadOverview() {
+  try {
+    const data = await fetchJson("/api/overview");
+    state.qualityReport = data.quality_report || null;
+    state.tdxStatus = data.tdx_status || null;
+    state.catalogMeta = data.catalog_meta || null;
+
+    const list = el("tdx-cities");
+    if (list && data.tdx_cities) {
+      list.innerHTML = "";
+      (data.tdx_cities || []).forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = String(c);
+        list.appendChild(opt);
+      });
+    }
+
+    const tags = el("catalog-tags");
+    if (tags && state.catalogMeta && Array.isArray(state.catalogMeta.tags)) {
+      tags.innerHTML = "";
+      state.catalogMeta.tags.forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        tags.appendChild(opt);
+      });
+    }
+
+    const locs = el("catalog-locations");
+    if (locs && state.catalogMeta) {
+      const options = new Set();
+      (state.catalogMeta.cities || []).forEach((c) => options.add(String(c)));
+      const byCity = state.catalogMeta.districts_by_city || {};
+      Object.entries(byCity).forEach(([city, districts]) => {
+        (districts || []).forEach((d) => {
+          options.add(String(d));
+          options.add(`${city} ${d}`);
+        });
+      });
+      locs.innerHTML = "";
+      [...options].sort().forEach((v) => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        locs.appendChild(opt);
+      });
+    }
+  } catch (_) {
+    // leave existing values as-is
+  } finally {
+    renderCoverage();
+    renderPolicySummary();
+    updateBriefStrip();
+    renderDebug();
   }
 }
 
@@ -2111,6 +2393,10 @@ function loadSavedQueryIntoForm(saved) {
   if (saved.settings_overrides) {
     el("overrides-json").value = JSON.stringify(saved.settings_overrides, null, 2);
   }
+  const savedCity = deepGet(saved, ["settings_overrides", "ingestion", "tdx", "city"]);
+  if (savedCity && el("context-city") && !el("context-city").value) {
+    el("context-city").value = String(savedCity);
+  }
 
   const select = el("preset");
   select.value = saved.preset_selection || saved.preset || "";
@@ -2159,7 +2445,7 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
     setResultsPayload(data);
     renderDebug();
     updateBriefStrip();
-    refreshTdxStatus();
+    loadOverview();
   } catch (e) {
     setBusy(false, `${statusPrefix}Error: ${e.message}`);
   }
@@ -2487,6 +2773,19 @@ function initDom() {
     saveUiState();
     updateRouteLinesForAll();
   });
+  [
+    ["bus", "layer-bus"],
+    ["bike", "layer-bike"],
+    ["metro", "layer-metro"],
+    ["parking", "layer-parking"],
+  ].forEach(([kind, id]) => {
+    const node = el(id);
+    if (!node) return;
+    node.checked = Boolean(state.mapLayers[kind]);
+    node.addEventListener("change", (e) => {
+      setLayerEnabled(kind, Boolean(e.target.checked));
+    });
+  });
 
   el("mode-balanced").addEventListener("click", () => {
     applyModeBalanced();
@@ -2559,6 +2858,14 @@ function initDom() {
     updateBriefStrip();
     if (state.autoRun) scheduleAutoRun("time_window");
   });
+  if (el("context-city")) {
+    el("context-city").addEventListener("change", () => {
+      updateBriefStrip();
+      state.overlayLastKey = { bus: null, bike: null, metro: null, parking: null };
+      refreshAllOverlays();
+      if (state.autoRun) scheduleAutoRun("city");
+    });
+  }
   el("start").addEventListener("change", () => {
     applyQuickWindow();
     updateBriefStrip();
@@ -2642,9 +2949,8 @@ function initDom() {
   setNumberValue("heading-deg", state.headingDeg || 0);
 
   await loadServerSettings();
+  await loadOverview();
   await loadServerPresets();
-  await loadCatalogMeta();
-  await loadTdxCities();
   loadCustomPresets();
   rebuildPresetSelect();
 
@@ -2660,6 +2966,7 @@ function initDom() {
   if (state.settings && state.settings.ingestion && state.settings.ingestion.tdx) {
     const city = state.settings.ingestion.tdx.city;
     if (el("tdx-city") && !el("tdx-city").value) el("tdx-city").value = city || "";
+    if (el("context-city") && !el("context-city").value) el("context-city").value = city || "";
   }
 
   const lat = numberValue("origin-lat") || 25.0478;
@@ -2669,17 +2976,17 @@ function initDom() {
 
   initDom();
   el("show-lines").checked = state.showLines;
+  ["bus", "bike", "metro", "parking"].forEach((k) => {
+    if (state.mapLayers[k]) setLayerEnabled(k, true);
+  });
   openTab(state.activeTab || "results");
   openSetupStep(state.activeSetupStep || "step-1");
   updateBriefStrip();
-  await refreshQualityReport();
-  await refreshTdxStatus();
   await refreshTdxJob();
   SLIDER_IDS.forEach(bindSlider);
   setStatus("Ready. Press Ctrl+Enter to run.");
 
-  setInterval(refreshTdxStatus, 30_000);
-  setInterval(refreshQualityReport, 60_000);
+  setInterval(loadOverview, 60_000);
 })();
 
 function updateRouteLineForSelected() {

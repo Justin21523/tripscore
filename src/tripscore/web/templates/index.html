@@ -60,6 +60,7 @@
           <div class="brief-items">
             <span id="brief-when" class="brief-item">When: —</span>
             <span id="brief-from" class="brief-item">From: —</span>
+            <span id="brief-city" class="brief-item">City: —</span>
             <span id="brief-goal" class="brief-item">Goal: —</span>
             <span id="brief-topn" class="brief-item">Top N: —</span>
             <span id="brief-data" class="brief-item">Data: —</span>
@@ -116,6 +117,17 @@
                 <label>
                   Preset description
                   <input id="preset-description" type="text" value="Custom" disabled />
+                </label>
+              </div>
+
+              <div class="row row-2">
+                <label>
+                  City context (TDX)
+                  <input id="context-city" type="text" placeholder="e.g., Taipei" list="tdx-cities" />
+                </label>
+                <label>
+                  Notes
+                  <input type="text" value="Used as a fallback when a POI has no city; affects which bulk datasets are used." disabled />
                 </label>
               </div>
 
@@ -447,6 +459,22 @@
             <label class="toggle" title="Show lines from origin">
               <input id="show-lines" type="checkbox" />
               Lines
+            </label>
+            <label class="toggle" title="Bus stops (bulk)">
+              <input id="layer-bus" type="checkbox" />
+              Bus
+            </label>
+            <label class="toggle" title="Bike stations (bulk)">
+              <input id="layer-bike" type="checkbox" />
+              Bike
+            </label>
+            <label class="toggle" title="Metro stations (bulk)">
+              <input id="layer-metro" type="checkbox" />
+              Metro
+            </label>
+            <label class="toggle" title="Parking lots (bulk)">
+              <input id="layer-parking" type="checkbox" />
+              Parking
             </label>
           </div>
         </div>
