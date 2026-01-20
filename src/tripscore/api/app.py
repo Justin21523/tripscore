@@ -8,12 +8,14 @@ Business logic lives in `tripscore.api.routes` and `tripscore.recommender`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.cors import CORSMiddleware
 
 from tripscore.core.logging import configure_logging
 
@@ -23,6 +25,26 @@ from .tdx_prefetch import router as tdx_prefetch_router
 configure_logging()
 
 app = FastAPI(title="TripScore API", version="0.1.0")
+
+# CORS (dev-friendly): allow local frontends (e.g. http://localhost:8003) to call this API.
+# Configure via env:
+# - TRIPSCORE_CORS_ORIGINS="http://localhost:8003,http://127.0.0.1:8003"
+# - TRIPSCORE_CORS_ALLOW_LOCAL=0 to disable the default localhost allowance
+cors_origins = [s.strip() for s in os.getenv("TRIPSCORE_CORS_ORIGINS", "").split(",") if s.strip()]
+cors_allow_local = os.getenv("TRIPSCORE_CORS_ALLOW_LOCAL", "1").strip().lower() in {"1", "true", "yes", "y"}
+cors_origin_regex = os.getenv("TRIPSCORE_CORS_ALLOW_ORIGIN_REGEX", "").strip() or (
+    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$" if cors_allow_local and not cors_origins else ""
+)
+if cors_origins or cors_origin_regex:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_origin_regex=cors_origin_regex or None,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 app.include_router(router)
 app.include_router(tdx_prefetch_router)
 
