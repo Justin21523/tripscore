@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.cors import CORSMiddleware
@@ -58,13 +58,41 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    """Serve the minimal web UI (single-page app)."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return RedirectResponse(url="/briefing", status_code=307)
+
+
+@app.get("/briefing", response_class=HTMLResponse)
+def briefing(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request, "page": "briefing"})
+
+
+@app.get("/plan", response_class=HTMLResponse)
+def plan(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request, "page": "plan"})
+
+
+@app.get("/results", response_class=HTMLResponse)
+def results(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request, "page": "results"})
+
+
+@app.get("/map", response_class=HTMLResponse)
+def map_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request, "page": "map"})
+
+
+@app.get("/data", response_class=HTMLResponse)
+def data_status(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request, "page": "data"})
+
+
+@app.get("/methods", response_class=HTMLResponse)
+def methods(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request, "page": "methods"})
 
 
 @app.get("/{path:path}", response_class=HTMLResponse, include_in_schema=False)
 def spa_fallback(request: Request, path: str) -> HTMLResponse:
-    """Serve SPA shell for deep links (non-API, non-static paths)."""
     if path.startswith("api") or path.startswith("static") or path in {"openapi.json", "docs", "redoc", "config"}:
         return HTMLResponse(status_code=404, content="Not Found")
-    return templates.TemplateResponse("index.html", {"request": request})
+    return HTMLResponse(status_code=404, content="Not Found")

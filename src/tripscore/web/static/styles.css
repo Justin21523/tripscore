@@ -362,6 +362,7 @@ body {
 }
 
 .nav-item {
+  display: block;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(17, 24, 39, 0.03);
@@ -370,6 +371,7 @@ body {
   font-weight: 800;
   color: var(--text);
   cursor: pointer;
+  text-decoration: none;
 }
 
 .nav-item.active {
@@ -406,7 +408,6 @@ body {
 body[data-page="briefing"] .workspace {
   display: block;
   max-width: 1100px;
-  justify-self: center;
 }
 body[data-page="briefing"] #page-briefing {
   display: block;
@@ -415,7 +416,6 @@ body[data-page="briefing"] #page-briefing {
 body[data-page="plan"] .workspace {
   display: block;
   max-width: 860px;
-  justify-self: center;
 }
 body[data-page="plan"] .panel-controls {
   display: block;
@@ -424,7 +424,6 @@ body[data-page="plan"] .panel-controls {
 body[data-page="results"] .workspace {
   display: block;
   max-width: 980px;
-  justify-self: center;
 }
 body[data-page="results"] .panel-inspector {
   display: block;
@@ -443,7 +442,6 @@ body[data-page="map"] .panel-inspector {
 body[data-page="data"] .workspace {
   display: block;
   max-width: 1300px;
-  justify-self: center;
 }
 body[data-page="data"] #page-data {
   display: block;
@@ -452,11 +450,19 @@ body[data-page="data"] #page-data {
 body[data-page="methods"] .workspace {
   display: block;
   max-width: 1100px;
-  justify-self: center;
 }
 body[data-page="methods"] #page-methods {
   display: block;
 }
+
+.layout-map {
+  display: grid;
+  grid-template-columns: 1fr 460px;
+  gap: 12px;
+  align-items: start;
+}
+
+/* Page routing is server-side; templates render only the content needed for each route. */
 
 .panel {
   background: linear-gradient(180deg, rgba(251, 251, 249, 0.92), rgba(255, 255, 255, 0.78));
@@ -630,6 +636,9 @@ body[data-page="methods"] #page-methods {
   .kpi-grid,
   .how-grid,
   .data-grid {
+    grid-template-columns: 1fr;
+  }
+  .layout-map {
     grid-template-columns: 1fr;
   }
   body[data-page="map"] .workspace {

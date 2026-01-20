@@ -104,6 +104,7 @@ async function copyText(text) {
 const STORAGE = {
   lastQueryV1: "tripscore.last_query.v1",
   lastQueryV2: "tripscore.last_query.v2",
+  lastResponseV1: "tripscore.last_response.v1",
   uiState: "tripscore.ui_state.v1",
   customPresets: "tripscore.custom_presets.v1",
   tdxJobId: "tripscore.tdx_job_id.v1",
@@ -117,7 +118,6 @@ const state = {
   overridesEnabled: false,
   moveStepM: 50,
   headingDeg: 0,
-  activePage: "briefing",
   activeTab: "results",
   showLines: false,
   mapLayers: { bus: false, bike: false, metro: false, parking: false },
@@ -152,32 +152,8 @@ const state = {
 };
 
 function setStatus(message) {
-  el("status").textContent = message;
-}
-
-function openPage(page) {
-  const p = String(page || "briefing");
-  state.activePage = p;
-  try {
-    document.body.dataset.page = p;
-  } catch (_) {
-    // ignore
-  }
-  document.querySelectorAll(".nav-item").forEach((btn) => {
-    const active = btn.dataset.page === p;
-    btn.classList.toggle("active", active);
-  });
-  saveUiState();
-  if (p === "map") {
-    // Leaflet needs a size invalidation after showing a hidden container.
-    setTimeout(() => {
-      try {
-        if (state.map && typeof state.map.invalidateSize === "function") state.map.invalidateSize();
-      } catch (_) {
-        // ignore
-      }
-    }, 50);
-  }
+  const node = el("status");
+  if (node) node.textContent = message;
 }
 
 function showToast(title, message, { kind, timeoutMs } = { kind: "ok", timeoutMs: 5000 }) {
@@ -733,6 +709,7 @@ function destIcon(rank, { selected, dimmed } = { selected: false, dimmed: false 
 
 function ensureMap(originLat, originLon) {
   if (!window.L) return null;
+  if (!el("map")) return null;
   if (state.map) return state.map;
 
   const m = L.map("map", { zoomControl: true }).setView([originLat, originLon], 12);
@@ -1565,6 +1542,12 @@ function setResultsPayload(payload) {
     state.baseRankById[id] = idx + 1;
   });
 
+  try {
+    localStorage.setItem(STORAGE.lastResponseV1, JSON.stringify({ saved_at_unix: Math.floor(Date.now() / 1000), payload }));
+  } catch (_) {
+    // ignore
+  }
+
   updateBriefStrip();
   renderPolicySummary();
   renderBriefing();
@@ -2172,7 +2155,6 @@ function saveUiState() {
     showLines: state.showLines,
     mapLayers: state.mapLayers,
     overlayDensity: state.overlayDensity,
-    activePage: state.activePage,
     activeTab: state.activeTab,
     activeSetupStep: state.activeSetupStep,
   };
@@ -2205,7 +2187,6 @@ function loadUiState() {
       };
     }
     state.overlayDensity = Boolean(ui.overlayDensity);
-    state.activePage = ui.activePage || "briefing";
     state.activeTab = ui.activeTab || "results";
     state.activeSetupStep = ui.activeSetupStep || "step-1";
   } catch (_) {
@@ -2978,6 +2959,18 @@ function loadSavedQueryIntoForm(saved) {
   refreshSliders();
 }
 
+function loadLastResponse() {
+  try {
+    const raw = localStorage.getItem(STORAGE.lastResponseV1);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return null;
+    return data.payload || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 let autoRunTimer = null;
 function scheduleAutoRun(reason) {
   if (!state.autoRun) return;
@@ -3016,12 +3009,17 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
     const data = await resp.json();
     const ms = Math.round(performance.now() - started);
     setBusy(false, `${statusPrefix}Got ${data.results.length} results in ${ms}ms.`);
-    openPage("results");
     openTab("results");
     setResultsPayload(data);
     renderDebug();
     updateBriefStrip();
     loadOverview();
+    try {
+      const page = (document.body && document.body.dataset && document.body.dataset.page) || "";
+      if (page && page !== "results" && page !== "map") window.location.assign("/results");
+    } catch (_) {
+      // ignore
+    }
     try {
       const prevTop = prev && prev.results && prev.results[0] ? prev.results[0].destination.name : null;
       const nextTop = data && data.results && data.results[0] ? data.results[0].destination.name : null;
@@ -3349,46 +3347,52 @@ function onGlobalKeyDown(evt) {
 }
 
 function initDom() {
-  el("query-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    runRecommendation({ reason: "submit" });
-  });
-  el("run-btn").addEventListener("click", () => runRecommendation({ reason: "run" }));
-  el("reset-btn").addEventListener("click", resetAll);
-  el("save-preset-btn").addEventListener("click", saveCustomPresetFromForm);
-  el("delete-preset-btn").addEventListener("click", deleteSelectedPreset);
-  el("help-btn").addEventListener("click", openHelp);
-  document.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => openPage(btn.dataset.page));
-  });
-  if (el("cta-start-planning")) el("cta-start-planning").addEventListener("click", () => openPage("plan"));
-  if (el("cta-view-data")) el("cta-view-data").addEventListener("click", () => openPage("data"));
-  el("clear-btn").addEventListener("click", () => {
-    clearMarkers();
-    el("results").innerHTML = "";
-    el("inspector").innerHTML = `<p class="hint">Cleared.</p>`;
-    el("debug-response").textContent = "{}";
-    el("debug-selected").textContent = "{}";
-    el("result-count").textContent = "";
-    state.lastResponse = null;
-    state.resultsById = {};
-    state.baseOrder = [];
-    state.viewOrder = [];
-    state.baseRankById = {};
-    state.selectedId = null;
-    setStatus("Cleared results and markers.");
-  });
+  const form = el("query-form");
+  if (form) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      runRecommendation({ reason: "submit" });
+    });
+  }
+  if (el("run-btn")) el("run-btn").addEventListener("click", () => runRecommendation({ reason: "run" }));
+  if (el("reset-btn")) el("reset-btn").addEventListener("click", resetAll);
+  if (el("save-preset-btn")) el("save-preset-btn").addEventListener("click", saveCustomPresetFromForm);
+  if (el("delete-preset-btn")) el("delete-preset-btn").addEventListener("click", deleteSelectedPreset);
+  if (el("help-btn")) el("help-btn").addEventListener("click", openHelp);
 
-  el("fit-btn").addEventListener("click", () => fitToResults());
+  if (el("clear-btn")) {
+    el("clear-btn").addEventListener("click", () => {
+      clearMarkers();
+      const results = el("results");
+      if (results) results.innerHTML = "";
+      const inspector = el("inspector");
+      if (inspector) inspector.innerHTML = `<p class="hint">Cleared.</p>`;
+      if (el("debug-response")) el("debug-response").textContent = "{}";
+      if (el("debug-selected")) el("debug-selected").textContent = "{}";
+      if (el("result-count")) el("result-count").textContent = "";
+      state.lastResponse = null;
+      state.resultsById = {};
+      state.baseOrder = [];
+      state.viewOrder = [];
+      state.baseRankById = {};
+      state.selectedId = null;
+      setStatus("Cleared results and markers.");
+    });
+  }
+
+  if (el("fit-btn")) el("fit-btn").addEventListener("click", () => fitToResults());
   if (el("fit-selected-btn")) el("fit-selected-btn").addEventListener("click", () => fitToSelected());
   if (el("prev-btn")) el("prev-btn").addEventListener("click", () => selectRelative(-1, { focusTab: true }));
   if (el("next-btn")) el("next-btn").addEventListener("click", () => selectRelative(1, { focusTab: true }));
   if (el("export-btn")) el("export-btn").addEventListener("click", () => exportReport());
-  el("show-lines").addEventListener("change", (e) => {
-    state.showLines = Boolean(e.target.checked);
-    saveUiState();
-    updateRouteLinesForAll();
-  });
+
+  if (el("show-lines")) {
+    el("show-lines").addEventListener("change", (e) => {
+      state.showLines = Boolean(e.target.checked);
+      saveUiState();
+      updateRouteLinesForAll();
+    });
+  }
   if (el("layer-density")) {
     el("layer-density").checked = Boolean(state.overlayDensity);
     el("layer-density").addEventListener("change", (e) => setOverlayDensity(Boolean(e.target.checked)));
@@ -3407,18 +3411,24 @@ function initDom() {
     });
   });
 
-  el("mode-balanced").addEventListener("click", () => {
-    applyModeBalanced();
-    if (state.autoRun) scheduleAutoRun("mode:balanced");
-  });
-  el("mode-rainy").addEventListener("click", () => {
-    applyModeRainyDay();
-    if (state.autoRun) scheduleAutoRun("mode:rainy");
-  });
-  el("mode-family").addEventListener("click", () => {
-    applyModeFamily();
-    if (state.autoRun) scheduleAutoRun("mode:family");
-  });
+  if (el("mode-balanced")) {
+    el("mode-balanced").addEventListener("click", () => {
+      applyModeBalanced();
+      if (state.autoRun) scheduleAutoRun("mode:balanced");
+    });
+  }
+  if (el("mode-rainy")) {
+    el("mode-rainy").addEventListener("click", () => {
+      applyModeRainyDay();
+      if (state.autoRun) scheduleAutoRun("mode:rainy");
+    });
+  }
+  if (el("mode-family")) {
+    el("mode-family").addEventListener("click", () => {
+      applyModeFamily();
+      if (state.autoRun) scheduleAutoRun("mode:family");
+    });
+  }
 
   document.querySelectorAll(".step-tab").forEach((btn) => {
     btn.addEventListener("click", () => openSetupStep(btn.dataset.step));
@@ -3430,54 +3440,70 @@ function initDom() {
     btn.addEventListener("click", () => openSetupStep(btn.dataset.prevStep));
   });
 
-  el("preset").addEventListener("change", onPresetChanged);
+  if (el("preset")) el("preset").addEventListener("change", onPresetChanged);
 
-  el("auto-run").addEventListener("change", (e) => {
-    state.autoRun = Boolean(e.target.checked);
-    saveUiState();
-  });
-  el("pick-origin").addEventListener("change", (e) => {
-    state.pickOrigin = Boolean(e.target.checked);
-    saveUiState();
-  });
-  el("enable-overrides").addEventListener("change", (e) => {
-    state.overridesEnabled = Boolean(e.target.checked);
-    setAdvancedOverridesEnabled(state.overridesEnabled);
-    saveUiState();
-    if (state.autoRun) scheduleAutoRun("overrides");
-  });
-  el("keyboard-controls").addEventListener("change", (e) => {
-    state.keyboardControls = Boolean(e.target.checked);
-    saveUiState();
-  });
-  el("move-step").addEventListener("change", (e) => {
-    state.moveStepM = Number(e.target.value) || 50;
-    saveUiState();
-  });
+  if (el("auto-run")) {
+    el("auto-run").addEventListener("change", (e) => {
+      state.autoRun = Boolean(e.target.checked);
+      saveUiState();
+    });
+  }
+  if (el("pick-origin")) {
+    el("pick-origin").addEventListener("change", (e) => {
+      state.pickOrigin = Boolean(e.target.checked);
+      saveUiState();
+    });
+  }
+  if (el("enable-overrides")) {
+    el("enable-overrides").addEventListener("change", (e) => {
+      state.overridesEnabled = Boolean(e.target.checked);
+      setAdvancedOverridesEnabled(state.overridesEnabled);
+      saveUiState();
+      if (state.autoRun) scheduleAutoRun("overrides");
+    });
+  }
+  if (el("keyboard-controls")) {
+    el("keyboard-controls").addEventListener("change", (e) => {
+      state.keyboardControls = Boolean(e.target.checked);
+      saveUiState();
+    });
+  }
+  if (el("move-step")) {
+    el("move-step").addEventListener("change", (e) => {
+      state.moveStepM = Number(e.target.value) || 50;
+      saveUiState();
+    });
+  }
 
-  el("heading-deg").addEventListener("change", () => {
-    state.headingDeg = clamp(Number(numberValue("heading-deg") || 0), 0, 359);
-    saveUiState();
-    updateHeadingLine();
-  });
-  el("rotate-left").addEventListener("click", () => rotateHeading(-15));
-  el("rotate-right").addEventListener("click", () => rotateHeading(15));
-  el("center-origin-btn").addEventListener("click", () => {
-    const lat = numberValue("origin-lat");
-    const lon = numberValue("origin-lon");
-    if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: true, source: "manual" });
-  });
+  if (el("heading-deg")) {
+    el("heading-deg").addEventListener("change", () => {
+      state.headingDeg = clamp(Number(numberValue("heading-deg") || 0), 0, 359);
+      saveUiState();
+      updateHeadingLine();
+    });
+  }
+  if (el("rotate-left")) el("rotate-left").addEventListener("click", () => rotateHeading(-15));
+  if (el("rotate-right")) el("rotate-right").addEventListener("click", () => rotateHeading(15));
+  if (el("center-origin-btn")) {
+    el("center-origin-btn").addEventListener("click", () => {
+      const lat = numberValue("origin-lat");
+      const lon = numberValue("origin-lon");
+      if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: true, source: "manual" });
+    });
+  }
 
-  el("move-n").addEventListener("click", () => onMove("n"));
-  el("move-s").addEventListener("click", () => onMove("s"));
-  el("move-e").addEventListener("click", () => onMove("e"));
-  el("move-w").addEventListener("click", () => onMove("w"));
+  if (el("move-n")) el("move-n").addEventListener("click", () => onMove("n"));
+  if (el("move-s")) el("move-s").addEventListener("click", () => onMove("s"));
+  if (el("move-e")) el("move-e").addEventListener("click", () => onMove("e"));
+  if (el("move-w")) el("move-w").addEventListener("click", () => onMove("w"));
 
-  el("quick-window").addEventListener("change", () => {
-    applyQuickWindow();
-    updateBriefStrip();
-    if (state.autoRun) scheduleAutoRun("time_window");
-  });
+  if (el("quick-window")) {
+    el("quick-window").addEventListener("change", () => {
+      applyQuickWindow();
+      updateBriefStrip();
+      if (state.autoRun) scheduleAutoRun("time_window");
+    });
+  }
   if (el("context-city")) {
     el("context-city").addEventListener("change", () => {
       updateBriefStrip();
@@ -3486,104 +3512,123 @@ function initDom() {
       if (state.autoRun) scheduleAutoRun("city");
     });
   }
-  el("start").addEventListener("change", () => {
-    applyQuickWindow();
-    updateBriefStrip();
-    if (state.autoRun) scheduleAutoRun("time_window");
-  });
-  el("end").addEventListener("change", () => {
-    updateBriefStrip();
-    if (state.autoRun) scheduleAutoRun("time_window");
-  });
+  if (el("start")) {
+    el("start").addEventListener("change", () => {
+      applyQuickWindow();
+      updateBriefStrip();
+      if (state.autoRun) scheduleAutoRun("time_window");
+    });
+  }
+  if (el("end")) {
+    el("end").addEventListener("change", () => {
+      updateBriefStrip();
+      if (state.autoRun) scheduleAutoRun("time_window");
+    });
+  }
 
-  el("origin-lat").addEventListener("change", () => {
-    const lat = numberValue("origin-lat");
-    const lon = numberValue("origin-lon");
-    if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: false, source: "manual" });
-    updateBriefStrip();
-  });
-  el("origin-lon").addEventListener("change", () => {
-    const lat = numberValue("origin-lat");
-    const lon = numberValue("origin-lon");
-    if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: false, source: "manual" });
-    updateBriefStrip();
-  });
+  if (el("origin-lat")) {
+    el("origin-lat").addEventListener("change", () => {
+      const lat = numberValue("origin-lat");
+      const lon = numberValue("origin-lon");
+      if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: false, source: "manual" });
+      updateBriefStrip();
+    });
+  }
+  if (el("origin-lon")) {
+    el("origin-lon").addEventListener("change", () => {
+      const lat = numberValue("origin-lat");
+      const lon = numberValue("origin-lon");
+      if (lat !== null && lon !== null) updateOrigin(lat, lon, { center: false, source: "manual" });
+      updateBriefStrip();
+    });
+  }
 
   ["result-search", "result-tags", "result-location"].forEach((id) => {
-    el(id).addEventListener("input", () => updateView({ selectDefault: false }));
+    const node = el(id);
+    if (node) node.addEventListener("input", () => updateView({ selectDefault: false }));
   });
   ["result-sort", "result-min-score"].forEach((id) => {
-    el(id).addEventListener("change", () => updateView({ selectDefault: false }));
+    const node = el(id);
+    if (node) node.addEventListener("change", () => updateView({ selectDefault: false }));
   });
 
-  el("tab-results").addEventListener("click", () => openTab("results"));
-  el("tab-details").addEventListener("click", () => openTab("details"));
+  if (el("tab-results")) el("tab-results").addEventListener("click", () => openTab("results"));
+  if (el("tab-details")) el("tab-details").addEventListener("click", () => openTab("details"));
   if (el("tab-compare")) el("tab-compare").addEventListener("click", () => openTab("compare"));
-  el("tab-debug").addEventListener("click", () => {
-    renderDebug();
-    openTab("debug");
-  });
+  if (el("tab-debug")) {
+    el("tab-debug").addEventListener("click", () => {
+      renderDebug();
+      openTab("debug");
+    });
+  }
 
-  el("tdx-start-btn").addEventListener("click", () => startTdxJobFromUi());
-  el("tdx-cancel-btn").addEventListener("click", () => cancelTdxJob());
+  if (el("tdx-start-btn")) el("tdx-start-btn").addEventListener("click", () => startTdxJobFromUi());
+  if (el("tdx-cancel-btn")) el("tdx-cancel-btn").addEventListener("click", () => cancelTdxJob());
 
-  el("copy-query-btn").addEventListener("click", async () => {
-    try {
-      const payload = buildPreferencesPayload();
-      const ok = await copyText(JSON.stringify(payload, null, 2));
-      setStatus(ok ? "Copied request JSON." : "Copy failed.");
-    } catch (e) {
-      setStatus(`Error: ${e.message}`);
-    }
-  });
+  if (el("copy-query-btn")) {
+    el("copy-query-btn").addEventListener("click", async () => {
+      try {
+        const payload = buildPreferencesPayload();
+        const ok = await copyText(JSON.stringify(payload, null, 2));
+        setStatus(ok ? "Copied request JSON." : "Copy failed.");
+      } catch (e) {
+        setStatus(`Error: ${e.message}`);
+      }
+    });
+  }
 
-  el("copy-selected-btn").addEventListener("click", async () => {
-    const id = state.selectedId;
-    if (!id || !(id in state.resultsById)) {
-      setStatus("No selected result.");
-      return;
-    }
-    const ok = await copyText(JSON.stringify(state.resultsById[id], null, 2));
-    setStatus(ok ? "Copied selected item JSON." : "Copy failed.");
-  });
+  if (el("copy-selected-btn")) {
+    el("copy-selected-btn").addEventListener("click", async () => {
+      const id = state.selectedId;
+      if (!id || !(id in state.resultsById)) {
+        setStatus("No selected result.");
+        return;
+      }
+      const ok = await copyText(JSON.stringify(state.resultsById[id], null, 2));
+      setStatus(ok ? "Copied selected item JSON." : "Copy failed.");
+    });
+  }
 
-  el("load-defaults-btn").addEventListener("click", () => {
-    applySettingsDefaults();
-    el("overrides-json").value = "";
-    setStatus("Loaded server defaults.");
-    if (state.autoRun) scheduleAutoRun("defaults");
-  });
+  if (el("load-defaults-btn")) {
+    el("load-defaults-btn").addEventListener("click", () => {
+      applySettingsDefaults();
+      if (el("overrides-json")) el("overrides-json").value = "";
+      setStatus("Loaded server defaults.");
+      if (state.autoRun) scheduleAutoRun("defaults");
+    });
+  }
 
   document.addEventListener("keydown", onGlobalKeyDown);
-  wireAutoRunListeners();
+  if (typeof wireAutoRunListeners === "function") wireAutoRunListeners();
 }
 
 (async function init() {
   loadUiState();
   loadTdxJobId();
-  el("auto-run").checked = state.autoRun;
-  el("pick-origin").checked = state.pickOrigin;
-  el("enable-overrides").checked = state.overridesEnabled;
+  if (el("auto-run")) el("auto-run").checked = state.autoRun;
+  if (el("pick-origin")) el("pick-origin").checked = state.pickOrigin;
+  if (el("enable-overrides")) el("enable-overrides").checked = state.overridesEnabled;
   setAdvancedOverridesEnabled(state.overridesEnabled);
-  el("keyboard-controls").checked = state.keyboardControls;
-  el("move-step").value = String(state.moveStepM || 50);
-  setNumberValue("heading-deg", state.headingDeg || 0);
-  openPage(state.activePage || "briefing");
+  if (el("keyboard-controls")) el("keyboard-controls").checked = state.keyboardControls;
+  if (el("move-step")) el("move-step").value = String(state.moveStepM || 50);
+  if (el("heading-deg")) setNumberValue("heading-deg", state.headingDeg || 0);
 
   await loadServerSettings();
   await loadOverview();
   await loadServerPresets();
   loadCustomPresets();
-  rebuildPresetSelect();
+  if (el("preset")) rebuildPresetSelect();
 
   applySettingsDefaults();
 
   const saved = loadLastQuery();
   loadSavedQueryIntoForm(saved);
-  setDefaultTimes();
+  if (el("start") && el("end")) setDefaultTimes();
 
-  setPresetDescription(el("preset").value || "");
-  el("delete-preset-btn").disabled = !Boolean(state.customPresets[el("preset").value || ""]);
+  if (el("preset")) setPresetDescription(el("preset").value || "");
+  if (el("delete-preset-btn") && el("preset")) {
+    el("delete-preset-btn").disabled = !Boolean(state.customPresets[el("preset").value || ""]);
+  }
 
   if (state.settings && state.settings.ingestion && state.settings.ingestion.tdx) {
     const city = state.settings.ingestion.tdx.city;
@@ -3591,22 +3636,36 @@ function initDom() {
     if (el("context-city") && !el("context-city").value) el("context-city").value = city || "";
   }
 
-  const lat = numberValue("origin-lat") || 25.0478;
-  const lon = numberValue("origin-lon") || 121.517;
-  ensureMap(lat, lon);
-  updateOrigin(lat, lon, { center: true, source: "manual" });
+  if (el("origin-lat") && el("origin-lon")) {
+    const lat = numberValue("origin-lat") || 25.0478;
+    const lon = numberValue("origin-lon") || 121.517;
+    ensureMap(lat, lon);
+    updateOrigin(lat, lon, { center: true, source: "manual" });
+  }
 
   initDom();
-  el("show-lines").checked = state.showLines;
+  if (el("show-lines")) el("show-lines").checked = state.showLines;
   ["bus", "bike", "metro", "parking"].forEach((k) => {
     if (state.mapLayers[k]) setLayerEnabled(k, true);
   });
   openTab(state.activeTab || "results");
-  openSetupStep(state.activeSetupStep || "step-1");
+  if (document.querySelector(".step-section")) openSetupStep(state.activeSetupStep || "step-1");
   updateBriefStrip();
-  await refreshTdxJob();
+  if (typeof refreshTdxJob === "function") await refreshTdxJob();
   SLIDER_IDS.forEach(bindSlider);
   setStatus("Ready. Press Ctrl+Enter to run.");
+
+  // Restore last results for /results and /map pages.
+  try {
+    if (el("results") || el("map")) {
+      const last = loadLastResponse();
+      if (last && last.results && Array.isArray(last.results)) {
+        setResultsPayload(last);
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
 
   setInterval(loadOverview, 60_000);
 })();

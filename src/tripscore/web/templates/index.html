@@ -12,7 +12,7 @@
       crossorigin=""
     />
   </head>
-  <body data-page="briefing">
+  <body data-page="{{ page or 'briefing' }}">
     <header class="topbar">
       <div class="brand">
         <h1>TripScore</h1>
@@ -43,12 +43,12 @@
       <aside class="sidebar">
         <div class="sidebar-title">TripScore</div>
         <nav class="sidebar-nav" aria-label="Primary navigation">
-          <button id="nav-briefing" type="button" class="nav-item" data-page="briefing">Landing</button>
-          <button id="nav-plan" type="button" class="nav-item" data-page="plan">Plan</button>
-          <button id="nav-results" type="button" class="nav-item" data-page="results">Results</button>
-          <button id="nav-map" type="button" class="nav-item" data-page="map">Map</button>
-          <button id="nav-data" type="button" class="nav-item" data-page="data">Data status</button>
-          <button id="nav-methods" type="button" class="nav-item" data-page="methods">Methods</button>
+          <a class="nav-item {{ 'active' if (page or 'briefing') == 'briefing' else '' }}" href="/briefing">Landing</a>
+          <a class="nav-item {{ 'active' if (page or 'briefing') == 'plan' else '' }}" href="/plan">Plan</a>
+          <a class="nav-item {{ 'active' if (page or 'briefing') == 'results' else '' }}" href="/results">Results</a>
+          <a class="nav-item {{ 'active' if (page or 'briefing') == 'map' else '' }}" href="/map">Map</a>
+          <a class="nav-item {{ 'active' if (page or 'briefing') == 'data' else '' }}" href="/data">Data status</a>
+          <a class="nav-item {{ 'active' if (page or 'briefing') == 'methods' else '' }}" href="/methods">Methods</a>
         </nav>
         <div class="sidebar-foot muted">
           Tip: press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run.
@@ -65,8 +65,8 @@
             they ranked.
           </p>
           <div class="briefing-cta">
-            <button id="cta-start-planning" type="button" class="btn btn-primary">Start planning</button>
-            <button id="cta-view-data" type="button" class="btn">View data status</button>
+            <a href="/plan" class="btn btn-primary">Start planning</a>
+            <a href="/data" class="btn">View data status</a>
           </div>
         </div>
 
