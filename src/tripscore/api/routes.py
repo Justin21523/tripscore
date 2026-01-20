@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from tripscore.catalog.loader import load_destinations_with_details
+from tripscore.catalog.loader import load_destinations
 from tripscore.config.settings import get_settings
 from tripscore.core.cache import FileCache, record_cache_stats
 from tripscore.core.geo import GeoPoint as CoreGeoPoint, haversine_m
@@ -34,6 +35,49 @@ router = APIRouter()
 def get_tdx_cities() -> dict:
     """Return supported TDX city codes (used by tools and UI)."""
     return {"cities": list(ALL_CITIES)}
+
+def _catalog_meta_fast() -> dict:
+    settings = get_settings()
+    resolved = resolve_project_path(settings.catalog.path)
+    destinations = load_destinations(resolved)
+
+    tag_counts: dict[str, int] = {}
+    city_counts: dict[str, int] = {}
+    districts_by_city: dict[str, set[str]] = {}
+
+    for d in destinations:
+        for t in d.tags:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+        if d.city:
+            city_counts[d.city] = city_counts.get(d.city, 0) + 1
+            if d.district:
+                districts_by_city.setdefault(d.city, set()).add(d.district)
+
+    return {
+        "catalog_path": str(settings.catalog.path),
+        "updated_at_unix": int(resolved.stat().st_mtime) if resolved.exists() else None,
+        "destination_count": len(destinations),
+        "tags": sorted(tag_counts.keys()),
+        "tag_counts": dict(sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "cities": sorted(city_counts.keys()),
+        "city_counts": dict(sorted(city_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "districts_by_city": {c: sorted(list(ds)) for c, ds in districts_by_city.items()},
+    }
+
+
+@router.get("/api/overview")
+def get_overview() -> dict:
+    """Return a single aggregated payload for the web UI (offline + cached)."""
+    settings = get_settings()
+    quality = build_quality_report(settings)
+    tdx_status = get_tdx_status()
+    catalog_meta = _catalog_meta_fast()
+    return {
+        "quality_report": quality,
+        "tdx_status": tdx_status,
+        "catalog_meta": catalog_meta,
+        "tdx_cities": list(ALL_CITIES),
+    }
 
 
 @lru_cache
@@ -213,6 +257,138 @@ def get_tdx_bus_routes(city: str | None = None) -> dict:
     city_name = str(city or settings.ingestion.tdx.city)
     routes = tdx_client.get_bus_routes(city=city_name)
     return {"city": city_name, "count": len(routes), "routes": [r.__dict__ for r in routes]}
+
+@router.get("/api/tdx/bus/stops/bulk")
+def get_tdx_bus_stops_bulk(
+    city: str | None = None,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    min_lon: float | None = None,
+    max_lon: float | None = None,
+    limit: int = 8000,
+) -> dict:
+    """Return bus stop locations from bulk cache (no network)."""
+    settings = get_settings()
+    tdx_client, _ = _clients()
+    city_name = str(city or settings.ingestion.tdx.city)
+    stops = tdx_client.get_bus_stops_bulk(city=city_name)
+    limit = max(1, min(20000, int(limit)))
+
+    def in_bbox(lat: float, lon: float) -> bool:
+        if min_lat is not None and lat < float(min_lat):
+            return False
+        if max_lat is not None and lat > float(max_lat):
+            return False
+        if min_lon is not None and lon < float(min_lon):
+            return False
+        if max_lon is not None and lon > float(max_lon):
+            return False
+        return True
+
+    out = []
+    for s in stops:
+        if len(out) >= limit:
+            break
+        if not in_bbox(float(s.lat), float(s.lon)):
+            continue
+        out.append({"stop_uid": s.stop_uid, "name": s.name, "lat": s.lat, "lon": s.lon})
+    return {"city": city_name, "count": len(out), "stops": out}
+
+
+@router.get("/api/tdx/bike/stations/bulk")
+def get_tdx_bike_stations_bulk(
+    city: str | None = None,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    min_lon: float | None = None,
+    max_lon: float | None = None,
+    limit: int = 6000,
+) -> dict:
+    """Return bike station locations from bulk cache (no network)."""
+    settings = get_settings()
+    tdx_client, _ = _clients()
+    city_name = str(city or settings.ingestion.tdx.city)
+    stations = tdx_client.get_bike_stations_bulk(city=city_name)
+    limit = max(1, min(20000, int(limit)))
+
+    def in_bbox(lat: float, lon: float) -> bool:
+        if min_lat is not None and lat < float(min_lat):
+            return False
+        if max_lat is not None and lat > float(max_lat):
+            return False
+        if min_lon is not None and lon < float(min_lon):
+            return False
+        if max_lon is not None and lon > float(max_lon):
+            return False
+        return True
+
+    out = []
+    for s in stations:
+        if len(out) >= limit:
+            break
+        if not in_bbox(float(s.lat), float(s.lon)):
+            continue
+        out.append({"station_uid": s.station_uid, "name": s.name, "lat": s.lat, "lon": s.lon})
+    return {"city": city_name, "count": len(out), "stations": out}
+
+
+@router.get("/api/tdx/parking/lots/bulk")
+def get_tdx_parking_lots_bulk(
+    city: str | None = None,
+    min_lat: float | None = None,
+    max_lat: float | None = None,
+    min_lon: float | None = None,
+    max_lon: float | None = None,
+    limit: int = 6000,
+) -> dict:
+    """Return parking lot locations from bulk cache (no network)."""
+    settings = get_settings()
+    tdx_client, _ = _clients()
+    city_name = str(city or settings.ingestion.tdx.city)
+    lots = tdx_client.get_parking_lots_bulk(city=city_name)
+    limit = max(1, min(20000, int(limit)))
+
+    def in_bbox(lat: float, lon: float) -> bool:
+        if min_lat is not None and lat < float(min_lat):
+            return False
+        if max_lat is not None and lat > float(max_lat):
+            return False
+        if min_lon is not None and lon < float(min_lon):
+            return False
+        if max_lon is not None and lon > float(max_lon):
+            return False
+        return True
+
+    out = []
+    for lot in lots:
+        if len(out) >= limit:
+            break
+        if not in_bbox(float(lot.lat), float(lot.lon)):
+            continue
+        out.append(
+            {
+                "parking_lot_uid": lot.parking_lot_uid,
+                "name": lot.name,
+                "lat": lot.lat,
+                "lon": lot.lon,
+                "total_spaces": lot.total_spaces,
+                "service_time": lot.service_time,
+                "fare_description": lot.fare_description,
+            }
+        )
+    return {"city": city_name, "count": len(out), "lots": out}
+
+
+@router.get("/api/tdx/metro/stations/bulk")
+def get_tdx_metro_stations_bulk(operators: str | None = None) -> dict:
+    """Return metro station locations from bulk cache (no network)."""
+    settings = get_settings()
+    tdx_client, _ = _clients()
+    ops = [s.strip() for s in str(operators or "").split(",") if s.strip()] or list(
+        settings.ingestion.tdx.metro_stations.operators
+    )
+    stations = tdx_client.get_metro_stations_bulk(operators=ops)
+    return {"operators": ops, "count": len(stations), "stations": [s.__dict__ for s in stations]}
 
 
 @router.get("/api/tdx/bus/eta/nearby")
