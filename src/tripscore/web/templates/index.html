@@ -12,7 +12,7 @@
       crossorigin=""
     />
   </head>
-  <body>
+  <body data-page="briefing">
     <header class="topbar">
       <div class="brand">
         <h1>TripScore</h1>
@@ -39,7 +39,93 @@
       </div>
     </div>
 
-    <main class="workspace">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-title">TripScore</div>
+        <nav class="sidebar-nav" aria-label="Primary navigation">
+          <button id="nav-briefing" type="button" class="nav-item" data-page="briefing">Landing</button>
+          <button id="nav-plan" type="button" class="nav-item" data-page="plan">Plan</button>
+          <button id="nav-results" type="button" class="nav-item" data-page="results">Results</button>
+          <button id="nav-map" type="button" class="nav-item" data-page="map">Map</button>
+          <button id="nav-data" type="button" class="nav-item" data-page="data">Data status</button>
+          <button id="nav-methods" type="button" class="nav-item" data-page="methods">Methods</button>
+        </nav>
+        <div class="sidebar-foot muted">
+          Tip: press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run.
+        </div>
+      </aside>
+
+      <main class="workspace">
+      <section id="page-briefing" class="page page-briefing">
+        <div class="briefing-hero">
+          <div class="briefing-kicker">Policy-style briefing</div>
+          <h2 class="briefing-title">Plan a trip with transparent, explainable recommendations.</h2>
+          <p class="briefing-lead">
+            TripScore combines offline catalogs and cached open-data signals to recommend destinations and explain why
+            they ranked.
+          </p>
+          <div class="briefing-cta">
+            <button id="cta-start-planning" type="button" class="btn btn-primary">Start planning</button>
+            <button id="cta-view-data" type="button" class="btn">View data status</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card" id="kpi-top">
+            <div class="kpi-label">Top recommendation</div>
+            <div class="kpi-value">—</div>
+            <div class="kpi-meta">Run the planner to generate recommendations.</div>
+          </div>
+          <div class="kpi-card" id="kpi-quality">
+            <div class="kpi-label">Data quality</div>
+            <div class="kpi-value">—</div>
+            <div class="kpi-meta">Shows freshness, cache usage, and degraded signals.</div>
+          </div>
+          <div class="kpi-card" id="kpi-coverage">
+            <div class="kpi-label">Coverage progress</div>
+            <div class="kpi-value">—</div>
+            <div class="kpi-meta">Bulk datasets by city (done/unsupported/missing).</div>
+          </div>
+        </div>
+
+        <div class="briefing-section">
+          <h3>How it works</h3>
+          <div class="how-grid">
+            <div class="how-card">
+              <div class="how-title">Problem</div>
+              <p>
+                Choosing destinations is a decision under uncertainty: time windows, starting point, and data gaps can
+                change the best option.
+              </p>
+            </div>
+            <div class="how-card">
+              <div class="how-title">Method</div>
+              <p>
+                We score candidates with a transparent breakdown (accessibility, weather comfort, preferences, and
+                context) and show the evidence behind each component.
+              </p>
+            </div>
+            <div class="how-card">
+              <div class="how-title">Recommendation</div>
+              <p>
+                You get a ranked list plus a policy-style brief: suggested actions, who it fits, and risks/limitations
+                when signals are missing or rate-limited.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <details class="panel-callout" open>
+          <summary>Limits & interpretation</summary>
+          <div class="callout-body">
+            <ul class="howto-steps">
+              <li><strong>Not real-time for everything</strong>: bulk layers are cached; real-time ETAs are targeted.</li>
+              <li><strong>Missing data is handled conservatively</strong>: scores may degrade to neutral when signals fail.</li>
+              <li><strong>Use Data status</strong> to understand whether a gap is unsupported vs still fetching.</li>
+            </ul>
+          </div>
+        </details>
+      </section>
       <section class="panel panel-controls">
         <div class="panel-header">
           <h2>Control Panel</h2>
@@ -613,7 +699,59 @@
           </div>
         </div>
       </section>
+      <section id="page-data" class="page page-data">
+        <div class="page-header">
+          <h2>Data status</h2>
+          <p class="muted">Coverage, freshness, and why a missing dataset may be normal.</p>
+        </div>
+        <div class="kpi-grid" id="data-kpis"></div>
+        <div class="data-grid">
+          <div class="data-card">
+            <div class="data-title">Coverage matrix</div>
+            <div id="data-coverage-matrix" class="coverage-table"></div>
+          </div>
+          <div class="data-card">
+            <div class="data-title">Daemon metrics</div>
+            <div id="data-daemon" class="muted">Loading…</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-methods" class="page page-methods">
+        <div class="page-header">
+          <h2>Methods</h2>
+          <p class="muted">Transparent scoring, data sources, and known limitations.</p>
+        </div>
+        <div class="methods-grid">
+          <div class="data-card">
+            <div class="data-title">Scoring model</div>
+            <ul class="howto-steps">
+              <li><strong>Accessibility</strong>: proximity to transit layers and origin distance blend.</li>
+              <li><strong>Weather comfort</strong>: rain/temperature comfort with configurable weights.</li>
+              <li><strong>Preference match</strong>: tags (indoor/outdoor/culture/food/family/crowd_low).</li>
+              <li><strong>Context</strong>: crowd and family context signals when available.</li>
+            </ul>
+          </div>
+          <div class="data-card">
+            <div class="data-title">Degradation policy</div>
+            <ul class="howto-steps">
+              <li><strong>Rate limits</strong>: targeted real-time queries back off under cooldown.</li>
+              <li><strong>Missing data</strong>: components fall back to neutral rather than guessing.</li>
+              <li><strong>Auditability</strong>: each result includes component reasons and data quality hints.</li>
+            </ul>
+          </div>
+          <div class="data-card">
+            <div class="data-title">What to do if results look wrong</div>
+            <ul class="howto-steps">
+              <li>Verify the time window and starting point.</li>
+              <li>Check <strong>Data status</strong> for missing/unsupported datasets in your city.</li>
+              <li>Use Compare to test alternative scenarios (modes/weights).</li>
+            </ul>
+          </div>
+        </div>
+      </section>
     </main>
+    </div>
 
     <dialog id="help-modal" class="modal">
       <form method="dialog" class="modal-card">

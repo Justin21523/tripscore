@@ -117,6 +117,7 @@ const state = {
   overridesEnabled: false,
   moveStepM: 50,
   headingDeg: 0,
+  activePage: "briefing",
   activeTab: "results",
   showLines: false,
   mapLayers: { bus: false, bike: false, metro: false, parking: false },
@@ -152,6 +153,31 @@ const state = {
 
 function setStatus(message) {
   el("status").textContent = message;
+}
+
+function openPage(page) {
+  const p = String(page || "briefing");
+  state.activePage = p;
+  try {
+    document.body.dataset.page = p;
+  } catch (_) {
+    // ignore
+  }
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    const active = btn.dataset.page === p;
+    btn.classList.toggle("active", active);
+  });
+  saveUiState();
+  if (p === "map") {
+    // Leaflet needs a size invalidation after showing a hidden container.
+    setTimeout(() => {
+      try {
+        if (state.map && typeof state.map.invalidateSize === "function") state.map.invalidateSize();
+      } catch (_) {
+        // ignore
+      }
+    }, 50);
+  }
 }
 
 function showToast(title, message, { kind, timeoutMs } = { kind: "ok", timeoutMs: 5000 }) {
@@ -283,6 +309,127 @@ function renderPolicySummary() {
   lines.push("</ul>");
 
   node.innerHTML = lines.join("");
+}
+
+function renderBriefing() {
+  const topNode = el("kpi-top");
+  const qualityNode = el("kpi-quality");
+  const covNode = el("kpi-coverage");
+  if (!topNode || !qualityNode || !covNode) return;
+
+  const resp = state.lastResponse;
+  const best = resp && Array.isArray(resp.results) && resp.results.length ? resp.results[0] : null;
+  if (best) {
+    const name = best.destination && best.destination.name ? best.destination.name : "—";
+    const score = best.breakdown && typeof best.breakdown.total_score === "number" ? best.breakdown.total_score : null;
+    const conf = confidenceForItem(best);
+    topNode.querySelector(".kpi-value").textContent = `${name}`;
+    topNode.querySelector(".kpi-meta").textContent = `score ${score !== null ? Number(score).toFixed(3) : "—"} · ${conf.label}`;
+  } else {
+    topNode.querySelector(".kpi-value").textContent = "—";
+    topNode.querySelector(".kpi-meta").textContent = "Run the planner to generate recommendations.";
+  }
+
+  const report = state.qualityReport;
+  const sev = (report && report.overall && report.overall.severity) || "—";
+  const warns = resp && resp.meta && Array.isArray(resp.meta.warnings) ? resp.meta.warnings.length : 0;
+  qualityNode.querySelector(".kpi-value").textContent = String(sev).toUpperCase();
+  const tdxm = state.tdxStatus && state.tdxStatus.daemon && state.tdxStatus.daemon.tdx_client ? state.tdxStatus.daemon.tdx_client : null;
+  const reqh = tdxm && typeof tdxm.requests_per_hour === "number" ? tdxm.requests_per_hour : null;
+  qualityNode.querySelector(".kpi-meta").textContent = `warnings ${warns} · req/h ${reqh !== null ? reqh : "—"}`;
+
+  const cov = report && report.tdx && report.tdx.bulk_coverage ? report.tdx.bulk_coverage : null;
+  const rows = cov && Array.isArray(cov.rows) ? cov.rows : [];
+  const done = rows.filter((r) => r && r.done).length;
+  const unsupported = rows.filter((r) => r && r.unsupported).length;
+  const missing = rows.filter((r) => r && r.missing).length;
+  const err429 = rows.filter((r) => r && Number(r.error_status) === 429).length;
+  covNode.querySelector(".kpi-value").textContent = `${done}/${rows.length || "—"}`;
+  covNode.querySelector(".kpi-meta").textContent = `unsupported ${unsupported} · missing ${missing} · 429 ${err429}`;
+}
+
+function renderDataStatus() {
+  const kpis = el("data-kpis");
+  const matrix = el("data-coverage-matrix");
+  const daemon = el("data-daemon");
+  if (!kpis || !matrix || !daemon) return;
+
+  const report = state.qualityReport;
+  const cov = report && report.tdx && report.tdx.bulk_coverage ? report.tdx.bulk_coverage : null;
+  const rows = cov && Array.isArray(cov.rows) ? cov.rows : [];
+
+  const done = rows.filter((r) => r && r.done).length;
+  const unsupported = rows.filter((r) => r && r.unsupported).length;
+  const missing = rows.filter((r) => r && r.missing).length;
+  const err429 = rows.filter((r) => r && Number(r.error_status) === 429).length;
+  const errOther = rows.filter((r) => r && r.error_status && ![404, 429].includes(Number(r.error_status))).length;
+
+  kpis.innerHTML = "";
+  const addKpi = (label, value, meta) => {
+    const c = document.createElement("div");
+    c.className = "kpi-card";
+    c.innerHTML = `<div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(
+      String(value)
+    )}</div><div class="kpi-meta">${escapeHtml(meta || "")}</div>`;
+    kpis.appendChild(c);
+  };
+  addKpi("Rows done", `${done}/${rows.length || 0}`, "Bulk progress across tracked datasets.");
+  addKpi("Unsupported", unsupported, "Known 404/unsupported cities stop retrying.");
+  addKpi("Missing/errors", `${missing} / ${err429}+${errOther}`, "Missing, 429, and other error statuses.");
+
+  // Coverage matrix by city for key bulk datasets.
+  const datasets = ["bus_stops", "bus_routes", "bike_stations", "parking_lots"];
+  const byCity = {};
+  rows.forEach((r) => {
+    if (!r || !r.scope || !r.scope.startsWith("city_")) return;
+    const city = String(r.scope).replace(/^city_/, "");
+    if (!byCity[city]) byCity[city] = {};
+    byCity[city][r.dataset] = r;
+  });
+  const cities = Object.keys(byCity).sort();
+
+  const badge = (text, cls) => `<span class="badge ${cls || ""}">${escapeHtml(text)}</span>`;
+  const cell = (r) => {
+    if (!r) return badge("—", "");
+    if (r.unsupported) return badge("unsupported", "warn");
+    if (r.missing) return badge("missing", "warn");
+    if (r.error_status) return badge(`err ${r.error_status}`, Number(r.error_status) === 429 ? "bad" : "warn");
+    if (r.done) return badge("done", "ok");
+    return badge("in progress", "");
+  };
+
+  const html = [];
+  html.push("<table>");
+  html.push("<thead><tr><th>City</th>");
+  datasets.forEach((ds) => html.push(`<th>${escapeHtml(ds)}</th>`));
+  html.push("</tr></thead>");
+  html.push("<tbody>");
+  cities.forEach((city) => {
+    html.push("<tr>");
+    html.push(`<td><strong>${escapeHtml(city)}</strong></td>`);
+    datasets.forEach((ds) => {
+      html.push(`<td>${cell(byCity[city][ds])}</td>`);
+    });
+    html.push("</tr>");
+  });
+  html.push("</tbody></table>");
+  matrix.innerHTML = html.join("");
+
+  const st = state.tdxStatus;
+  if (!st || !st.daemon) {
+    daemon.textContent = "Daemon status unavailable.";
+  } else {
+    const d = st.daemon.daemon || {};
+    const tdxm = st.daemon.tdx_client || {};
+    const cd = d.global_cooldown_until_unix ? formatUnix(d.global_cooldown_until_unix) : "—";
+    daemon.innerHTML = [
+      `<div><strong>Current city</strong>: ${escapeHtml(st.city || "—")}</div>`,
+      `<div><strong>Updated</strong>: ${escapeHtml(st.last_updated_at_unix ? formatUnix(st.last_updated_at_unix) : "—")}</div>`,
+      `<div><strong>Requests/hour</strong>: ${escapeHtml(String(tdxm.requests_per_hour ?? "—"))}</div>`,
+      `<div><strong>Last success</strong>: ${escapeHtml(tdxm.last_success_unix ? formatUnix(tdxm.last_success_unix) : "—")}</div>`,
+      `<div><strong>Global cooldown until</strong>: ${escapeHtml(cd)}</div>`,
+    ].join("");
+  }
 }
 
 function setBusy(busy, message) {
@@ -1420,6 +1567,8 @@ function setResultsPayload(payload) {
 
   updateBriefStrip();
   renderPolicySummary();
+  renderBriefing();
+  renderDataStatus();
   updateView({ selectDefault: true });
   renderComparePanel();
 }
@@ -2023,6 +2172,7 @@ function saveUiState() {
     showLines: state.showLines,
     mapLayers: state.mapLayers,
     overlayDensity: state.overlayDensity,
+    activePage: state.activePage,
     activeTab: state.activeTab,
     activeSetupStep: state.activeSetupStep,
   };
@@ -2055,6 +2205,7 @@ function loadUiState() {
       };
     }
     state.overlayDensity = Boolean(ui.overlayDensity);
+    state.activePage = ui.activePage || "briefing";
     state.activeTab = ui.activeTab || "results";
     state.activeSetupStep = ui.activeSetupStep || "step-1";
   } catch (_) {
@@ -2441,6 +2592,8 @@ async function loadOverview() {
   } finally {
     renderCoverage();
     renderPolicySummary();
+    renderBriefing();
+    renderDataStatus();
     updateBriefStrip();
     renderDebug();
   }
@@ -2863,6 +3016,7 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
     const data = await resp.json();
     const ms = Math.round(performance.now() - started);
     setBusy(false, `${statusPrefix}Got ${data.results.length} results in ${ms}ms.`);
+    openPage("results");
     openTab("results");
     setResultsPayload(data);
     renderDebug();
@@ -3204,6 +3358,11 @@ function initDom() {
   el("save-preset-btn").addEventListener("click", saveCustomPresetFromForm);
   el("delete-preset-btn").addEventListener("click", deleteSelectedPreset);
   el("help-btn").addEventListener("click", openHelp);
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => openPage(btn.dataset.page));
+  });
+  if (el("cta-start-planning")) el("cta-start-planning").addEventListener("click", () => openPage("plan"));
+  if (el("cta-view-data")) el("cta-view-data").addEventListener("click", () => openPage("data"));
   el("clear-btn").addEventListener("click", () => {
     clearMarkers();
     el("results").innerHTML = "";
@@ -3409,6 +3568,7 @@ function initDom() {
   el("keyboard-controls").checked = state.keyboardControls;
   el("move-step").value = String(state.moveStepM || 50);
   setNumberValue("heading-deg", state.headingDeg || 0);
+  openPage(state.activePage || "briefing");
 
   await loadServerSettings();
   await loadOverview();
