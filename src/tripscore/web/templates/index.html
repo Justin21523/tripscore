@@ -20,7 +20,7 @@
       </div>
       <div class="toolbar">
         <button id="run-btn" type="button" class="btn btn-primary" title="Ctrl+Enter">Run</button>
-        <label class="toggle" title="A">
+        <label class="toggle" title="Auto-run (A)">
           <input id="auto-run" type="checkbox" />
           Auto-run
         </label>
@@ -68,6 +68,19 @@
             <span id="brief-updated" class="brief-item">Updated: —</span>
           </div>
         </div>
+
+        <details class="panel-callout howto-panel" id="howto-panel" open>
+          <summary>How to use</summary>
+          <div class="callout-body">
+            <ol class="howto-steps">
+              <li><strong>Set time</strong>: choose Start/End (Step 1).</li>
+              <li><strong>Pick origin</strong>: drag the origin marker or enable “Pick origin”.</li>
+              <li><strong>Choose city context</strong>: set “City context (TDX)” when POIs have missing city.</li>
+              <li><strong>Run</strong>: press Run or Ctrl+Enter.</li>
+              <li><strong>Inspect</strong>: click a map marker to open the Brief; toggle layers for context.</li>
+            </ol>
+          </div>
+        </details>
 
         <details class="panel-callout" id="coverage-panel">
           <summary>Data coverage</summary>
@@ -123,7 +136,13 @@
               <div class="row row-2">
                 <label>
                   City context (TDX)
-                  <input id="context-city" type="text" placeholder="e.g., Taipei" list="tdx-cities" />
+                  <input
+                    id="context-city"
+                    type="text"
+                    placeholder="e.g., Taipei"
+                    list="tdx-cities"
+                    title="Used as a fallback when a POI has no city; affects which bulk datasets are used."
+                  />
                 </label>
                 <label>
                   Notes
@@ -456,23 +475,39 @@
             <button id="fit-btn" type="button" class="btn btn-small" title="Fit map to results">
               Fit
             </button>
+            <button id="fit-selected-btn" type="button" class="btn btn-small" title="Fit map to selected result">
+              Fit selected
+            </button>
+            <button id="prev-btn" type="button" class="btn btn-small" title="Previous result (P)">
+              Prev
+            </button>
+            <button id="next-btn" type="button" class="btn btn-small" title="Next result (N)">
+              Next
+            </button>
+            <button id="export-btn" type="button" class="btn btn-small" title="Download a JSON report (share/export)">
+              Export
+            </button>
             <label class="toggle" title="Show lines from origin">
               <input id="show-lines" type="checkbox" />
               Lines
             </label>
-            <label class="toggle" title="Bus stops (bulk)">
+            <label class="toggle" title="Density mode for bus/bike layers">
+              <input id="layer-density" type="checkbox" />
+              Density
+            </label>
+            <label class="toggle" title="Bus stops (bulk, offline cache)">
               <input id="layer-bus" type="checkbox" />
               Bus
             </label>
-            <label class="toggle" title="Bike stations (bulk)">
+            <label class="toggle" title="Bike stations (bulk, offline cache)">
               <input id="layer-bike" type="checkbox" />
               Bike
             </label>
-            <label class="toggle" title="Metro stations (bulk)">
+            <label class="toggle" title="Metro stations (bulk, offline cache)">
               <input id="layer-metro" type="checkbox" />
               Metro
             </label>
-            <label class="toggle" title="Parking lots (bulk)">
+            <label class="toggle" title="Parking lots (bulk, offline cache)">
               <input id="layer-parking" type="checkbox" />
               Parking
             </label>
@@ -493,6 +528,7 @@
         <div class="tabs" role="tablist" aria-label="Results panel">
           <button id="tab-results" class="tab active" type="button" role="tab" aria-selected="true">List</button>
           <button id="tab-details" class="tab" type="button" role="tab" aria-selected="false">Brief</button>
+          <button id="tab-compare" class="tab" type="button" role="tab" aria-selected="false">Compare</button>
           <button id="tab-debug" class="tab" type="button" role="tab" aria-selected="false">Data</button>
         </div>
 
@@ -525,6 +561,12 @@
         <div id="panel-details" class="tab-panel" role="tabpanel" aria-labelledby="tab-details">
           <div id="inspector" class="inspector">
             <p class="hint">Select a result (or map marker) to inspect its score breakdown.</p>
+          </div>
+        </div>
+
+        <div id="panel-compare" class="tab-panel" role="tabpanel" aria-labelledby="tab-compare">
+          <div id="compare-panel" class="compare-panel">
+            <p class="hint">Select up to 3 results to compare (checkbox in the list).</p>
           </div>
         </div>
 
@@ -617,5 +659,6 @@
     />
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
     <script src="/static/app.js"></script>
+    <div id="toast-host" class="toast-host" aria-live="polite" aria-atomic="true"></div>
   </body>
 </html>

@@ -138,6 +138,10 @@ const state = {
   markerGroup: null,
   overlayGroups: { bus: null, bike: null, metro: null, parking: null },
   overlayLastKey: { bus: null, bike: null, metro: null, parking: null },
+  mapLegend: null,
+  mapCallout: null,
+  compareIds: [],
+  overlayDensity: false,
   activeSetupStep: "step-1",
   tdxStatus: null,
   qualityReport: null,
@@ -148,6 +152,32 @@ const state = {
 
 function setStatus(message) {
   el("status").textContent = message;
+}
+
+function showToast(title, message, { kind, timeoutMs } = { kind: "ok", timeoutMs: 5000 }) {
+  const host = el("toast-host");
+  if (!host) return;
+  const toast = document.createElement("div");
+  toast.className = `toast ${kind ? `toast-${kind}` : ""}`.trim();
+  const t = document.createElement("div");
+  t.className = "toast-title";
+  t.textContent = title || "Update";
+  const b = document.createElement("div");
+  b.className = "toast-body";
+  b.textContent = message || "";
+  toast.appendChild(t);
+  toast.appendChild(b);
+  host.appendChild(toast);
+  const ms = Number(timeoutMs) || 0;
+  if (ms > 0) {
+    setTimeout(() => {
+      try {
+        toast.remove();
+      } catch (_) {
+        // ignore
+      }
+    }, ms);
+  }
 }
 
 function renderPolicySummary() {
@@ -161,6 +191,7 @@ function renderPolicySummary() {
   }
 
   const top = resp.results.slice(0, 3);
+  const best = resp.results[0];
   const errors = countTdxErrors(resp.results);
   const warnings = resp.meta && Array.isArray(resp.meta.warnings) ? resp.meta.warnings : [];
   const cache = resp.meta && resp.meta.cache ? resp.meta.cache : null;
@@ -178,6 +209,31 @@ function renderPolicySummary() {
     resp.query && resp.query.start && resp.query.end ? `${resp.query.start} → ${resp.query.end}` : null;
 
   const lines = [];
+  try {
+    const name = best.destination && best.destination.name ? best.destination.name : "Top recommendation";
+    const score = best.breakdown && typeof best.breakdown.total_score === "number" ? best.breakdown.total_score : null;
+    const brief = buildPolicyBrief(best);
+    const reasons = (brief && brief.reasons) || [];
+    const risks = (brief && brief.risks) || [];
+    lines.push(`<div class="top-hero">`);
+    lines.push(`<div class="top-hero-kicker">Top recommendation</div>`);
+    lines.push(
+      `<div class="top-hero-row"><div class="top-hero-name">${escapeHtml(
+        name
+      )}</div><div class="top-hero-score">${score !== null ? `score <strong>${Number(score).toFixed(3)}</strong>` : ""}</div></div>`
+    );
+    lines.push(`<div class="top-hero-body">`);
+    lines.push(`<div class="top-hero-col"><div class="top-hero-label">Why</div><ul>${reasons
+      .slice(0, 3)
+      .map((r) => `<li>${escapeHtml(r)}</li>`)
+      .join("")}</ul></div>`);
+    lines.push(`<div class="top-hero-col"><div class="top-hero-label">Main risk</div><div class="top-hero-risk">${escapeHtml(
+      (risks && risks[0]) || "—"
+    )}</div></div>`);
+    lines.push(`</div></div>`);
+  } catch (_) {
+    // ignore
+  }
   lines.push(`<h3>Policy Brief</h3>`);
   lines.push(
     `<p class="lead">A decision-focused summary of the current recommendation run${
@@ -304,6 +360,17 @@ function topComponents(item, n = 2) {
     .slice(0, n);
 }
 
+function topReasonLines(item, n = 2) {
+  const comps = topComponents(item, n);
+  const lines = [];
+  comps.forEach((c) => {
+    const reasons = (c.reasons || []).slice(0, 1).filter(Boolean);
+    if (reasons.length) lines.push(`${componentLabel(c.name)}: ${reasons[0]}`);
+    else lines.push(`${componentLabel(c.name)}: score ${Number(c.score).toFixed(2)}`);
+  });
+  return lines.slice(0, n);
+}
+
 function componentLabel(name) {
   const m = {
     accessibility: "Getting there",
@@ -322,6 +389,38 @@ function formatUnix(unixSeconds) {
   } catch (_) {
     return "";
   }
+}
+
+function confidenceForItem(item) {
+  const comps = (item.breakdown && item.breakdown.components) || [];
+  const hasTdxErrors = comps.some(
+    (c) => c.details && c.details.tdx_errors && typeof c.details.tdx_errors === "object" && Object.keys(c.details.tdx_errors).length
+  );
+  if (hasTdxErrors) return { label: "Degraded", cls: "bad" };
+
+  const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
+  if (!dc) return { label: "Partial", cls: "warn" };
+  const missingSignals = ["tdx_bus_stops", "tdx_bike", "tdx_metro", "tdx_parking", "weather"].filter((k) => !dc[k]).length;
+
+  // Use offline bulk coverage to detect incomplete cities (best-effort).
+  try {
+    const tdxCity = dc.tdx_city;
+    const cov = state.qualityReport && state.qualityReport.tdx && state.qualityReport.tdx.bulk_coverage;
+    const rows = cov && Array.isArray(cov.rows) ? cov.rows : [];
+    if (tdxCity && rows.length) {
+      const scope = `city_${tdxCity}`;
+      const relevant = rows.filter((r) => r && r.scope === scope && ["bus_stops", "bus_routes", "bike_stations", "parking_lots"].includes(r.dataset));
+      const missing = relevant.filter((r) => Boolean(r.missing)).length;
+      const incomplete = relevant.filter((r) => !r.done && !r.missing && !r.unsupported && !r.error_status).length;
+      const err = relevant.filter((r) => r.error_status && Number(r.error_status) !== 404).length;
+      if (missing || incomplete || err) return { label: "Partial", cls: "warn" };
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  if (missingSignals >= 2) return { label: "Partial", cls: "warn" };
+  return { label: "OK", cls: "ok" };
 }
 
 function buildStory(item) {
@@ -473,12 +572,12 @@ function originIcon() {
   });
 }
 
-function destIcon(rank, selected) {
+function destIcon(rank, { selected, dimmed } = { selected: false, dimmed: false }) {
   if (!window.L) return null;
-  const cls = selected ? "dest-icon selected" : "dest-icon";
+  const cls = ["dest-icon", selected ? "is-selected" : "", dimmed ? "is-dim" : ""].filter(Boolean).join(" ");
   return L.divIcon({
     className: cls,
-    html: `<div class="dest-icon-inner">${rank}</div>`,
+    html: `<div class="dest-icon-inner"><div class="dest-rank">${rank}</div><div class="dest-ring"></div></div>`,
     iconSize: [30, 30],
     iconAnchor: [15, 15],
     popupAnchor: [0, -14],
@@ -508,8 +607,93 @@ function ensureMap(originLat, originLon) {
   m.on("moveend", scheduleOverlayRefresh);
   m.on("zoomend", scheduleOverlayRefresh);
 
+  // Lightweight legend to explain icon colors and enabled layers.
+  try {
+    const legend = L.control({ position: "bottomleft" });
+    legend.onAdd = () => {
+      const div = L.DomUtil.create("div", "map-legend");
+      div.innerHTML = `<div class="map-legend-title">Legend</div><div class="map-legend-body">Loading…</div>`;
+      return div;
+    };
+    legend.addTo(m);
+    state.mapLegend = legend;
+    updateMapLegend();
+  } catch (_) {
+    // ignore
+  }
+
   state.map = m;
   return m;
+}
+
+function updateMapLegend() {
+  if (!state.map || !state.mapLegend) return;
+  try {
+    const node = state.mapLegend.getContainer().querySelector(".map-legend-body");
+    if (!node) return;
+
+    const on = (v) => (v ? `<span class="badge ok">on</span>` : `<span class="badge">off</span>`);
+    node.innerHTML = [
+      `<div class="map-legend-row"><span class="swatch origin"></span> Origin</div>`,
+      `<div class="map-legend-row"><span class="swatch result"></span> Results (ranked)</div>`,
+      `<div class="map-legend-row"><span class="swatch selected"></span> Selected (pulsing)</div>`,
+      `<div class="map-legend-row"><span class="swatch"></span> Density mode ${on(state.overlayDensity)}</div>`,
+      `<div class="map-legend-row"><span class="swatch bus"></span> Bus stops ${on(state.mapLayers.bus)}</div>`,
+      `<div class="map-legend-row"><span class="swatch bike"></span> Bike stations ${on(state.mapLayers.bike)}</div>`,
+      `<div class="map-legend-row"><span class="swatch metro"></span> Metro stations ${on(state.mapLayers.metro)}</div>`,
+      `<div class="map-legend-row"><span class="swatch parking"></span> Parking lots ${on(state.mapLayers.parking)}</div>`,
+    ].join("");
+  } catch (_) {
+    // ignore
+  }
+}
+
+function setMapCalloutForItem(item, { persistent } = { persistent: false }) {
+  if (!state.map || !window.L) return;
+  if (!item || !item.destination) return;
+  const d = item.destination;
+  const score = Number(item.breakdown && item.breakdown.total_score) || 0;
+  const reasons = topReasonLines(item, 2);
+
+  const html = [
+    `<div class="map-callout-title">${escapeHtml(d.name)}</div>`,
+    `<div class="map-callout-score">score <strong>${escapeHtml(score.toFixed(3))}</strong></div>`,
+    reasons.length ? `<div class="map-callout-reasons">${reasons.map((r) => `<div>• ${escapeHtml(r)}</div>`).join("")}</div>` : "",
+  ].join("");
+
+  try {
+    if (state.mapCallout) {
+      state.mapCallout.setLatLng([d.location.lat, d.location.lon]);
+      state.mapCallout.setContent(html);
+      state.mapCallout.options.__persistent = Boolean(persistent);
+      return;
+    }
+    state.mapCallout = L.popup({
+      closeButton: false,
+      autoClose: false,
+      closeOnClick: false,
+      className: "map-callout",
+      offset: [0, -18],
+    })
+      .setLatLng([d.location.lat, d.location.lon])
+      .setContent(html);
+    state.mapCallout.options.__persistent = Boolean(persistent);
+    state.mapCallout.openOn(state.map);
+  } catch (_) {
+    // ignore
+  }
+}
+
+function clearMapCallout({ force } = { force: false }) {
+  if (!state.map || !state.mapCallout) return;
+  try {
+    const isPersistent = Boolean(state.mapCallout.options && state.mapCallout.options.__persistent);
+    if (!force && isPersistent) return;
+    state.map.closePopup(state.mapCallout);
+    state.mapCallout = null;
+  } catch (_) {
+    // ignore
+  }
 }
 
 function currentTdxCityContext() {
@@ -537,7 +721,8 @@ function ensureOverlayGroup(kind) {
   if (!m) return null;
   if (state.overlayGroups[kind]) return state.overlayGroups[kind];
   const useCluster = Boolean(window.L && window.L.markerClusterGroup);
-  const group = useCluster ? L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 48 }) : L.layerGroup();
+  const wantsDensity = (kind === "bus" || kind === "bike") && state.overlayDensity;
+  const group = useCluster && !wantsDensity ? L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 48 }) : L.layerGroup();
   state.overlayGroups[kind] = group;
   return group;
 }
@@ -574,20 +759,31 @@ async function refreshOverlay(kind) {
     if (group.clearLayers) group.clearLayers();
     const colors = { bus: "#4f46e5", bike: "#10b981", metro: "#f59e0b", parking: "#ef4444" };
     const color = colors[kind] || "#94a3b8";
+    const useDensity = (kind === "bus" || kind === "bike") && state.overlayDensity;
     let payload;
     if (kind === "bus") {
       payload = await fetchJson(`/api/tdx/bus/stops/bulk?${qs({ city, ...bbox, limit: 8000 })}`);
       (payload.stops || []).forEach((s) => {
-        const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
-        marker.bindTooltip(`${s.name || "bus stop"}`, { direction: "top", opacity: 0.9 });
-        group.addLayer(marker);
+        if (useDensity) {
+          const dot = L.circleMarker([s.lat, s.lon], { radius: 4, weight: 0, fillColor: color, fillOpacity: 0.12 });
+          group.addLayer(dot);
+        } else {
+          const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
+          marker.bindTooltip(`${s.name || "bus stop"}`, { direction: "top", opacity: 0.9 });
+          group.addLayer(marker);
+        }
       });
     } else if (kind === "bike") {
       payload = await fetchJson(`/api/tdx/bike/stations/bulk?${qs({ city, ...bbox, limit: 6000 })}`);
       (payload.stations || []).forEach((s) => {
-        const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
-        marker.bindTooltip(`${s.name || "bike station"}`, { direction: "top", opacity: 0.9 });
-        group.addLayer(marker);
+        if (useDensity) {
+          const dot = L.circleMarker([s.lat, s.lon], { radius: 4, weight: 0, fillColor: color, fillOpacity: 0.14 });
+          group.addLayer(dot);
+        } else {
+          const marker = L.marker([s.lat, s.lon], { icon: dotIcon(color) });
+          marker.bindTooltip(`${s.name || "bike station"}`, { direction: "top", opacity: 0.9 });
+          group.addLayer(marker);
+        }
       });
     } else if (kind === "parking") {
       payload = await fetchJson(`/api/tdx/parking/lots/bulk?${qs({ city, ...bbox, limit: 6000 })}`);
@@ -617,6 +813,26 @@ function refreshAllOverlays() {
   });
 }
 
+function setOverlayDensity(enabled) {
+  state.overlayDensity = Boolean(enabled);
+  saveUiState();
+  // Recreate bus/bike overlay groups to switch between cluster and density mode.
+  ["bus", "bike"].forEach((k) => {
+    const g = state.overlayGroups[k];
+    if (g) {
+      try {
+        g.remove();
+      } catch (_) {
+        // ignore
+      }
+    }
+    state.overlayGroups[k] = null;
+    state.overlayLastKey[k] = null;
+  });
+  refreshAllOverlays();
+  updateMapLegend();
+}
+
 function setLayerEnabled(kind, enabled) {
   state.mapLayers[kind] = Boolean(enabled);
   saveUiState();
@@ -627,6 +843,7 @@ function setLayerEnabled(kind, enabled) {
     else group.remove();
   }
   if (enabled) refreshOverlay(kind);
+  updateMapLegend();
 }
 
 function clearMarkers() {
@@ -702,7 +919,7 @@ function updateOrigin(lat, lon, { center, source } = { center: false, source: "m
   }
 }
 
-function selectResult(id, { focusTab } = { focusTab: true }) {
+function selectResult(id, { focusTab, source } = { focusTab: true, source: "list" }) {
   if (!id || !(id in state.resultsById)) return;
   state.selectedId = id;
   const item = state.resultsById[id];
@@ -730,6 +947,24 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
   const meta = document.createElement("div");
   meta.className = "meta";
   meta.textContent = `${dest.city || ""} ${dest.district || ""}`.trim();
+  try {
+    const conf = confidenceForItem(item);
+    const pill = document.createElement("span");
+    pill.className = `badge ${conf.cls}`;
+    pill.style.marginLeft = "8px";
+    pill.textContent = conf.label;
+    meta.appendChild(pill);
+    const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
+    if (dc && dc.tdx_city) {
+      const p2 = document.createElement("span");
+      p2.className = "badge";
+      p2.style.marginLeft = "6px";
+      p2.textContent = `TDX ${dc.tdx_city}`;
+      meta.appendChild(p2);
+    }
+  } catch (_) {
+    // ignore
+  }
 
   const sub = document.createElement("div");
   sub.className = "submeta";
@@ -1086,8 +1321,20 @@ function selectResult(id, { focusTab } = { focusTab: true }) {
   document.querySelectorAll("#results li").forEach((node) => node.classList.remove("selected"));
   const selectedNode = document.querySelector(`#results li[data-id="${CSS.escape(id)}"]`);
   if (selectedNode) selectedNode.classList.add("selected");
+  if (selectedNode && source === "map") {
+    try {
+      selectedNode.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (_) {
+      // ignore
+    }
+  }
 
   highlightMarker(id);
+  try {
+    setMapCalloutForItem(item, { persistent: true });
+  } catch (_) {
+    // ignore
+  }
   if (state.map && state.destMarkers[id]) {
     const marker = state.destMarkers[id];
     if (state.markerGroup && typeof state.markerGroup.zoomToShowLayer === "function") {
@@ -1162,6 +1409,7 @@ function setResultsPayload(payload) {
   state.baseOrder = [];
   state.viewOrder = [];
   state.baseRankById = {};
+  state.compareIds = [];
 
   (payload.results || []).forEach((item, idx) => {
     const id = item.destination.id;
@@ -1173,12 +1421,16 @@ function setResultsPayload(payload) {
   updateBriefStrip();
   renderPolicySummary();
   updateView({ selectDefault: true });
+  renderComparePanel();
 }
 
 function highlightMarker(id) {
+  const hasSelection = Boolean(id);
   Object.entries(state.destMarkers).forEach(([destId, marker]) => {
     const rank = marker.options.__rank || 0;
-    marker.setIcon(destIcon(rank, destId === id));
+    const selected = destId === id;
+    const dimmed = hasSelection && !selected;
+    marker.setIcon(destIcon(rank, { selected, dimmed }));
   });
 }
 
@@ -1189,6 +1441,7 @@ function buildResultListItem(item, { rank }) {
   const dest = item.destination;
   const breakdown = item.breakdown;
   const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
+  const conf = confidenceForItem(item);
 
   const title = document.createElement("div");
   title.className = "result-title";
@@ -1200,8 +1453,22 @@ function buildResultListItem(item, { rank }) {
   score.className = "result-score";
   score.innerHTML = `score <strong>${Number(breakdown.total_score).toFixed(3)}</strong>`;
 
+  const compareWrap = document.createElement("label");
+  compareWrap.className = "compare-toggle";
+  compareWrap.title = "Add/remove from compare";
+  const compare = document.createElement("input");
+  compare.type = "checkbox";
+  compare.checked = state.compareIds.includes(dest.id);
+  compare.addEventListener("click", (e) => e.stopPropagation());
+  compare.addEventListener("change", (e) => {
+    e.stopPropagation();
+    toggleCompare(dest.id, { checked: Boolean(compare.checked) });
+  });
+  compareWrap.appendChild(compare);
+
   row.appendChild(title);
   row.appendChild(score);
+  row.appendChild(compareWrap);
 
   const meta = document.createElement("div");
   meta.className = "result-meta";
@@ -1220,13 +1487,8 @@ function buildResultListItem(item, { rank }) {
     meta.appendChild(makeBadge(`TDX ${dc.tdx_city}`, ""));
   }
 
-  const degraded = item.breakdown && item.breakdown.components
-    ? item.breakdown.components.some((c) => c.details && c.details.tdx_errors && Object.keys(c.details.tdx_errors || {}).length)
-    : false;
-  if (degraded) {
-    meta.appendChild(document.createTextNode(" "));
-    meta.appendChild(makeBadge("degraded", "warn"));
-  }
+  meta.appendChild(document.createTextNode(" "));
+  meta.appendChild(makeBadge(conf.label, conf.cls));
 
   const comps = document.createElement("div");
   comps.className = "components";
@@ -1242,9 +1504,15 @@ function buildResultListItem(item, { rank }) {
   li.appendChild(scorebarForItem(item));
   li.appendChild(comps);
 
-  li.addEventListener("click", () => selectResult(dest.id));
-  li.addEventListener("mouseenter", () => highlightMarker(dest.id));
-  li.addEventListener("mouseleave", () => highlightMarker(state.selectedId));
+  li.addEventListener("click", () => selectResult(dest.id, { focusTab: false, source: "list" }));
+  li.addEventListener("mouseenter", () => {
+    highlightMarker(dest.id);
+    if (state.map) setMapCalloutForItem(item, { persistent: false });
+  });
+  li.addEventListener("mouseleave", () => {
+    highlightMarker(state.selectedId);
+    clearMapCallout({ force: false });
+  });
 
   return li;
 }
@@ -1329,12 +1597,23 @@ function updateView({ selectDefault } = { selectDefault: false }) {
   renderMapFromOrder(state.viewOrder);
 }
 
+function selectRelative(delta, { focusTab } = { focusTab: true }) {
+  const order = state.viewOrder && state.viewOrder.length ? state.viewOrder : state.baseOrder;
+  if (!order || !order.length) return;
+  const cur = state.selectedId;
+  const idx = cur ? order.indexOf(cur) : -1;
+  const next = idx === -1 ? (delta > 0 ? 0 : order.length - 1) : (idx + delta + order.length) % order.length;
+  const id = order[next];
+  if (id) selectResult(id, { focusTab, source: "keyboard" });
+}
+
 function openTab(name) {
   state.activeTab = name;
 
   const tabs = [
     ["results", "tab-results", "panel-results"],
     ["details", "tab-details", "panel-details"],
+    ["compare", "tab-compare", "panel-compare"],
     ["debug", "tab-debug", "panel-debug"],
   ];
 
@@ -1349,6 +1628,118 @@ function openTab(name) {
     if (panel) panel.classList.toggle("active", active);
   });
   saveUiState();
+  if (name === "compare") renderComparePanel();
+}
+
+function toggleCompare(id, { checked } = { checked: null }) {
+  const want = checked === null ? !state.compareIds.includes(id) : Boolean(checked);
+  if (want) {
+    if (state.compareIds.includes(id)) return;
+    if (state.compareIds.length >= 3) {
+      showToast("Compare", "You can compare up to 3 results.", { kind: "warn", timeoutMs: 3500 });
+      // revert checkbox UI if present
+      const node = document.querySelector(`#results li[data-id="${CSS.escape(id)}"] input[type="checkbox"]`);
+      if (node) node.checked = false;
+      return;
+    }
+    state.compareIds.push(id);
+  } else {
+    state.compareIds = state.compareIds.filter((x) => x !== id);
+  }
+  renderComparePanel();
+}
+
+function renderComparePanel() {
+  const panel = el("compare-panel");
+  if (!panel) return;
+
+  const ids = state.compareIds.filter((id) => id in state.resultsById);
+  if (!ids.length) {
+    panel.innerHTML = `<p class="hint">Select up to 3 results to compare (checkbox in the list).</p>`;
+    return;
+  }
+
+  const header = document.createElement("div");
+  header.className = "compare-header";
+  const title = document.createElement("div");
+  title.className = "compare-title";
+  title.textContent = `Comparing ${ids.length} item${ids.length === 1 ? "" : "s"}`;
+  const actions = document.createElement("div");
+  actions.className = "compare-actions";
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "btn btn-small";
+  clear.textContent = "Clear";
+  clear.addEventListener("click", () => {
+    state.compareIds = [];
+    // update checkboxes in list
+    document.querySelectorAll("#results input[type=\"checkbox\"]").forEach((n) => (n.checked = false));
+    renderComparePanel();
+  });
+  actions.appendChild(clear);
+  header.appendChild(title);
+  header.appendChild(actions);
+
+  const grid = document.createElement("div");
+  grid.className = "compare-grid";
+  ids.forEach((id) => {
+    const item = state.resultsById[id];
+    const dest = item.destination;
+    const conf = confidenceForItem(item);
+    const brief = buildPolicyBrief(item);
+    const card = document.createElement("div");
+    card.className = "compare-card";
+
+    const h = document.createElement("div");
+    h.className = "compare-card-header";
+    h.innerHTML = `<div class="compare-name">${escapeHtml(dest.name)}</div><div class="compare-score">score <strong>${escapeHtml(
+      Number(item.breakdown.total_score).toFixed(3)
+    )}</strong></div>`;
+
+    const meta = document.createElement("div");
+    meta.className = "compare-meta";
+    const city = dest.city ? `${dest.city} ${dest.district || ""}`.trim() : dest.district || "";
+    meta.innerHTML = `${escapeHtml(city || "—")} · <span class="badge ${conf.cls}">${escapeHtml(conf.label)}</span>`;
+
+    const sec = (label, lines) => {
+      const wrap = document.createElement("div");
+      wrap.className = "compare-section";
+      const hh = document.createElement("div");
+      hh.className = "compare-section-title";
+      hh.textContent = label;
+      const ul = document.createElement("ul");
+      (lines || []).slice(0, 4).forEach((t) => {
+        const li = document.createElement("li");
+        li.textContent = t;
+        ul.appendChild(li);
+      });
+      wrap.appendChild(hh);
+      wrap.appendChild(ul);
+      return wrap;
+    };
+
+    const comps = (item.breakdown && item.breakdown.components) || [];
+    const compLines = comps.map((c) => `${c.name}: +${Number(c.contribution).toFixed(3)} (w ${Number(c.weight).toFixed(2)})`);
+
+    card.appendChild(h);
+    card.appendChild(meta);
+    card.appendChild(sec("Top reasons", brief.reasons));
+    card.appendChild(sec("Risks", brief.risks));
+    card.appendChild(sec("Components", compLines));
+
+    const selectBtn = document.createElement("button");
+    selectBtn.type = "button";
+    selectBtn.className = "btn btn-small";
+    selectBtn.textContent = "Select";
+    selectBtn.addEventListener("click", () => selectResult(id, { focusTab: true, source: "compare" }));
+    card.appendChild(selectBtn);
+
+    grid.appendChild(card);
+  });
+
+  panel.innerHTML = "";
+  panel.appendChild(header);
+  panel.appendChild(grid);
 }
 
 function renderDebug() {
@@ -1415,7 +1806,28 @@ function renderMapFromOrder(order) {
   updateOrigin(originLat, originLon, { center: false, source: "manual" });
 
   const useCluster = Boolean(window.L && window.L.markerClusterGroup);
-  const group = useCluster ? L.markerClusterGroup({ showCoverageOnHover: false }) : null;
+  const group = useCluster
+    ? L.markerClusterGroup({
+        showCoverageOnHover: false,
+        iconCreateFunction: (cluster) => {
+          try {
+            const ms = cluster.getAllChildMarkers ? cluster.getAllChildMarkers() : [];
+            const ranks = ms.map((x) => Number(x.options.__rank) || 9999).filter((x) => Number.isFinite(x));
+            const minRank = ranks.length ? Math.min(...ranks) : null;
+            const count = cluster.getChildCount ? cluster.getChildCount() : ranks.length;
+            const label = minRank !== null && minRank <= 10 ? `#${minRank}` : `${count}`;
+            return L.divIcon({
+              className: "cluster-icon",
+              html: `<div class="cluster-icon-inner"><div class="cluster-rank">${label}</div><div class="cluster-count">${count}</div></div>`,
+              iconSize: [46, 46],
+              iconAnchor: [23, 23],
+            });
+          } catch (_) {
+            return null;
+          }
+        },
+      })
+    : null;
   state.markerGroup = group;
 
   order.forEach((id, idx) => {
@@ -1424,14 +1836,20 @@ function renderMapFromOrder(order) {
     const d = item.destination;
     const score = Number(item.breakdown.total_score) || 0;
     const marker = L.marker([d.location.lat, d.location.lon], {
-      icon: destIcon(idx + 1, false),
+      icon: destIcon(idx + 1, { selected: false, dimmed: false }),
       __rank: idx + 1,
     });
     marker.bindPopup(`${idx + 1}. ${d.name}<br/>score ${score.toFixed(3)}`);
     marker.bindTooltip(`${d.name} · ${score.toFixed(3)}`, { direction: "top", opacity: 0.9, sticky: true });
-    marker.on("click", () => selectResult(d.id));
-    marker.on("mouseover", () => highlightMarker(d.id));
-    marker.on("mouseout", () => highlightMarker(state.selectedId));
+    marker.on("click", () => selectResult(d.id, { focusTab: true, source: "map" }));
+    marker.on("mouseover", () => {
+      highlightMarker(d.id);
+      setMapCalloutForItem(item, { persistent: false });
+    });
+    marker.on("mouseout", () => {
+      highlightMarker(state.selectedId);
+      clearMapCallout({ force: false });
+    });
     state.destMarkers[d.id] = marker;
     if (group) group.addLayer(marker);
     else marker.addTo(m);
@@ -1442,6 +1860,7 @@ function renderMapFromOrder(order) {
   highlightMarker(state.selectedId);
   updateRouteLineForSelected();
   updateRouteLinesForAll();
+  updateMapLegend();
 }
 
 function buildAdvancedOverrides() {
@@ -1603,6 +2022,7 @@ function saveUiState() {
     headingDeg: state.headingDeg,
     showLines: state.showLines,
     mapLayers: state.mapLayers,
+    overlayDensity: state.overlayDensity,
     activeTab: state.activeTab,
     activeSetupStep: state.activeSetupStep,
   };
@@ -1634,6 +2054,7 @@ function loadUiState() {
         parking: Boolean(ui.mapLayers.parking),
       };
     }
+    state.overlayDensity = Boolean(ui.overlayDensity);
     state.activeTab = ui.activeTab || "results";
     state.activeSetupStep = ui.activeSetupStep || "step-1";
   } catch (_) {
@@ -2427,6 +2848,7 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
   }
 
   saveLastQuery(payload);
+  const prev = state.lastResponse;
 
   try {
     const resp = await fetch("/api/recommendations", {
@@ -2446,6 +2868,21 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
     renderDebug();
     updateBriefStrip();
     loadOverview();
+    try {
+      const prevTop = prev && prev.results && prev.results[0] ? prev.results[0].destination.name : null;
+      const nextTop = data && data.results && data.results[0] ? data.results[0].destination.name : null;
+      const changed = prevTop && nextTop && prevTop !== nextTop ? `Top changed: ${prevTop} → ${nextTop}.` : null;
+      const warns = data && data.meta && Array.isArray(data.meta.warnings) ? data.meta.warnings.length : 0;
+      const dq = state.qualityReport && state.qualityReport.overall ? state.qualityReport.overall.severity : null;
+      const msgParts = [];
+      if (changed) msgParts.push(changed);
+      msgParts.push(`Results: ${data.results.length}.`);
+      if (warns) msgParts.push(`Warnings: ${warns}.`);
+      if (dq) msgParts.push(`Quality: ${dq}.`);
+      showToast("What changed", msgParts.join(" "), { kind: warns ? "warn" : "ok", timeoutMs: 5500 });
+    } catch (_) {
+      // ignore
+    }
   } catch (e) {
     setBusy(false, `${statusPrefix}Error: ${e.message}`);
   }
@@ -2669,12 +3106,23 @@ function onGlobalKeyDown(evt) {
     const id = state.viewOrder[idx];
     if (id) {
       evt.preventDefault();
-      selectResult(id);
+      selectResult(id, { focusTab: true, source: "keyboard" });
       return;
     }
   }
 
   if (!state.keyboardControls) return;
+
+  if (evt.key === "n" || evt.key === "N") {
+    evt.preventDefault();
+    selectRelative(1, { focusTab: true });
+    return;
+  }
+  if (evt.key === "p" || evt.key === "P") {
+    evt.preventDefault();
+    selectRelative(-1, { focusTab: true });
+    return;
+  }
 
   const moveKeys = {
     ArrowUp: "n",
@@ -2739,6 +3187,11 @@ function onGlobalKeyDown(evt) {
     const lon = numberValue("origin-lon");
     if (lat !== null && lon !== null && state.map) state.map.setView([lat, lon], Math.max(state.map.getZoom(), 12));
   }
+
+  if (evt.key === "f" || evt.key === "F") {
+    evt.preventDefault();
+    fitToSelected();
+  }
 }
 
 function initDom() {
@@ -2768,11 +3221,19 @@ function initDom() {
   });
 
   el("fit-btn").addEventListener("click", () => fitToResults());
+  if (el("fit-selected-btn")) el("fit-selected-btn").addEventListener("click", () => fitToSelected());
+  if (el("prev-btn")) el("prev-btn").addEventListener("click", () => selectRelative(-1, { focusTab: true }));
+  if (el("next-btn")) el("next-btn").addEventListener("click", () => selectRelative(1, { focusTab: true }));
+  if (el("export-btn")) el("export-btn").addEventListener("click", () => exportReport());
   el("show-lines").addEventListener("change", (e) => {
     state.showLines = Boolean(e.target.checked);
     saveUiState();
     updateRouteLinesForAll();
   });
+  if (el("layer-density")) {
+    el("layer-density").checked = Boolean(state.overlayDensity);
+    el("layer-density").addEventListener("change", (e) => setOverlayDensity(Boolean(e.target.checked)));
+  }
   [
     ["bus", "layer-bus"],
     ["bike", "layer-bike"],
@@ -2898,6 +3359,7 @@ function initDom() {
 
   el("tab-results").addEventListener("click", () => openTab("results"));
   el("tab-details").addEventListener("click", () => openTab("details"));
+  if (el("tab-compare")) el("tab-compare").addEventListener("click", () => openTab("compare"));
   el("tab-debug").addEventListener("click", () => {
     renderDebug();
     openTab("debug");
@@ -3063,4 +3525,99 @@ function fitToResults() {
   }
   const bounds = L.latLngBounds(pts);
   state.map.fitBounds(bounds.pad(0.12));
+}
+
+function fitToSelected() {
+  if (!state.map) return;
+  const originLat = numberValue("origin-lat");
+  const originLon = numberValue("origin-lon");
+  if (originLat === null || originLon === null) return;
+  const id = state.selectedId;
+  const it = id ? state.resultsById[id] : null;
+  if (!it) {
+    state.map.setView([originLat, originLon], Math.max(state.map.getZoom(), 12));
+    return;
+  }
+  const pts = [
+    [originLat, originLon],
+    [it.destination.location.lat, it.destination.location.lon],
+  ];
+  const bounds = L.latLngBounds(pts);
+  state.map.fitBounds(bounds.pad(0.18));
+}
+
+function exportReport() {
+  try {
+    const now = new Date();
+    const viewport = state.map
+      ? {
+          center: state.map.getCenter(),
+          zoom: state.map.getZoom(),
+          bounds: state.map.getBounds(),
+        }
+      : null;
+    const best = state.lastResponse && state.lastResponse.results && state.lastResponse.results[0] ? state.lastResponse.results[0] : null;
+    const top = state.lastResponse && Array.isArray(state.lastResponse.results) ? state.lastResponse.results.slice(0, 10) : [];
+    const payload = {
+      exported_at: now.toISOString(),
+      city_context: currentTdxCityContext(),
+      map_layers: { ...state.mapLayers, density: Boolean(state.overlayDensity) },
+      selected_id: state.selectedId || null,
+      compare_ids: [...state.compareIds],
+      query: state.lastResponse && state.lastResponse.query ? state.lastResponse.query : null,
+      overview: {
+        quality: state.qualityReport && state.qualityReport.overall ? state.qualityReport.overall : null,
+        tdx_status: state.tdxStatus ? { city: state.tdxStatus.city, last_updated_at_unix: state.tdxStatus.last_updated_at_unix, daemon: state.tdxStatus.daemon } : null,
+      },
+      top_recommendation: best
+        ? {
+            id: best.destination.id,
+            name: best.destination.name,
+            score: best.breakdown.total_score,
+            confidence: confidenceForItem(best).label,
+            brief: buildPolicyBrief(best),
+          }
+        : null,
+      results: top.map((it) => ({
+        id: it.destination.id,
+        name: it.destination.name,
+        city: it.destination.city,
+        district: it.destination.district,
+        score: it.breakdown.total_score,
+        confidence: confidenceForItem(it).label,
+        data_completeness: it.meta && it.meta.data_completeness ? it.meta.data_completeness : null,
+        components: (it.breakdown.components || []).map((c) => ({
+          name: c.name,
+          score: c.score,
+          weight: c.weight,
+          contribution: c.contribution,
+          reasons: c.reasons || [],
+        })),
+      })),
+      map: viewport
+        ? {
+            center: { lat: viewport.center.lat, lon: viewport.center.lng },
+            zoom: viewport.zoom,
+            bounds: {
+              south: viewport.bounds.getSouth(),
+              west: viewport.bounds.getWest(),
+              north: viewport.bounds.getNorth(),
+              east: viewport.bounds.getEast(),
+            },
+          }
+        : null,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tripscore-report-${now.toISOString().replaceAll(":", "").replaceAll(".", "")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast("Exported", "Downloaded tripscore report JSON.", { kind: "ok", timeoutMs: 3500 });
+  } catch (e) {
+    showToast("Export failed", String(e.message || e), { kind: "warn", timeoutMs: 4500 });
+  }
 }
