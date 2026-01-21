@@ -51,7 +51,8 @@ ALLOWED_SETTINGS_OVERRIDES_TREE: dict[str, Any] = {
     },
     # Ingestion is more sensitive (URLs, timeouts, secrets), so we whitelist only "math knobs".
     "ingestion": {
-        "tdx": {"accessibility": True},
+        # `city` is safe to override (it only changes which bulk cached datasets are read).
+        "tdx": {"accessibility": True, "city": True},
         "weather": {
             "aggregation": True,
             "comfort_temperature_c": True,

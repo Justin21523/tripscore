@@ -9,7 +9,10 @@ Endpoints:
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
+from uuid import uuid4
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -28,6 +31,9 @@ from tripscore.ingestion.tdx_client import TdxClient
 from tripscore.ingestion.weather_client import WeatherClient
 from tripscore.quality.report import build_quality_report
 from tripscore.recommender.recommend import recommend
+from tripscore.config.overrides import ALLOWED_SETTINGS_OVERRIDES_TREE
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -114,9 +120,26 @@ def post_recommendations(preferences: UserPreferences) -> RecommendationResult:
     settings = get_settings()
     tdx_client, weather_client = _clients()
     try:
+        request_id = uuid4().hex[:12]
+        t0 = time.perf_counter()
         with record_cache_stats() as stats, capture_ingestion_meta() as ing:
             result = recommend(preferences, settings=settings, tdx_client=tdx_client, weather_client=weather_client)
+        api_ms = int((time.perf_counter() - t0) * 1000)
         meta = {**(result.meta or {}), "cache": stats.as_dict(), "freshness": ing.sources}
+        debug = {
+            "request_id": request_id,
+            "api_ms": api_ms,
+            "generated_at_unix": int(time.time()),
+        }
+        logger.info(
+            "recommendation_run request_id=%s results=%s api_ms=%s cities=%s warnings=%s",
+            request_id,
+            len(result.results or []),
+            api_ms,
+            ",".join(((result.meta or {}).get("data_sources", {}) or {}).get("tdx", {}).get("cities", []) or []),
+            len(((result.meta or {}).get("warnings") or [])),
+        )
+        meta = {**meta, "debug": debug}
         return result.model_copy(update={"meta": meta})
     except ValueError as e:
         raise HTTPException(
@@ -177,6 +200,18 @@ def get_public_settings() -> dict:
     }
 
 
+@router.get("/api/health")
+def get_health() -> dict:
+    """Simple health check used by the UI to detect API base misconfiguration."""
+    try:
+        ingestion_tdx_city = bool(
+            ALLOWED_SETTINGS_OVERRIDES_TREE.get("ingestion", {}).get("tdx", {}).get("city", False)
+        )
+    except Exception:
+        ingestion_tdx_city = False
+    return {"ok": True, "name": "TripScore", "capabilities": {"overrides": {"ingestion_tdx_city": ingestion_tdx_city}}}
+
+
 @router.get("/api/catalog/meta")
 def get_catalog_meta() -> dict:
     """Return discoverable catalog metadata for the web UI (tags/cities/districts counts)."""
@@ -207,6 +242,36 @@ def get_catalog_meta() -> dict:
         "cities": sorted(city_counts.keys()),
         "city_counts": dict(sorted(city_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
         "districts_by_city": {c: sorted(list(ds)) for c, ds in districts_by_city.items()},
+    }
+
+
+@router.get("/api/catalog/destinations")
+def get_catalog_destinations(include_details: bool = True) -> dict:
+    """Return destinations for client-side search (optionally with merged details)."""
+    settings = get_settings()
+    resolved = resolve_project_path(settings.catalog.path)
+    details_path = getattr(settings.catalog, "details_path", None) if include_details else None
+    destinations = load_destinations_with_details(catalog_path=resolved, details_path=details_path)
+    return {
+        "catalog_path": str(settings.catalog.path),
+        "updated_at_unix": int(resolved.stat().st_mtime) if resolved.exists() else None,
+        "count": len(destinations),
+        "destinations": [
+            {
+                "id": d.id,
+                "name": d.name,
+                "location": {"lat": d.location.lat, "lon": d.location.lon},
+                "tags": list(d.tags or []),
+                "city": d.city,
+                "district": d.district,
+                "url": d.url,
+                "description": d.description,
+                "address": d.address,
+                "phone": d.phone,
+                "opening_hours": d.opening_hours,
+            }
+            for d in destinations
+        ],
     }
 
 

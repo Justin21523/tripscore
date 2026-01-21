@@ -38,6 +38,13 @@ def test_apply_settings_overrides_can_override_allowed_numeric_knobs():
     assert settings.ingestion.tdx.accessibility.radius_m != 1234
 
 
+def test_apply_settings_overrides_allows_tdx_city_override():
+    settings = get_settings()
+    overrides = {"ingestion": {"tdx": {"city": "Kaohsiung"}}}
+    out = apply_settings_overrides(settings, overrides)
+    assert out.ingestion.tdx.city == "Kaohsiung"
+
+
 def test_apply_settings_overrides_rejects_disallowed_keys_with_clear_path():
     # Load baseline settings for context (not strictly required, but keeps the call signature realistic).
     settings = get_settings()

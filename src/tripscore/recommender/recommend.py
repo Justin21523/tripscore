@@ -53,6 +53,19 @@ from tripscore.core.spatial_index import SpatialGridIndex
 
 logger = logging.getLogger(__name__)  # Module-level logger (configured by app entrypoint).
 
+SIGNAL_RULES_VERSION = "2026-01-21"
+
+
+def _signal_status(*, required_missing: list[str], optional_missing: list[str]) -> tuple[str, list[str]]:
+    issues: list[str] = []
+    if required_missing:
+        issues.extend(required_missing)
+        return "degraded", issues
+    if optional_missing:
+        issues.extend(optional_missing)
+        return "partial", issues
+    return "ok", issues
+
 
 def build_cache(settings: Settings) -> FileCache:
     # Convert the configured cache directory to a Path for cross-platform correctness.
@@ -362,8 +375,10 @@ def recommend(
         if not metro_stations:
             tdx_errors["metro"] = "No bulk metro station data yet."
             a_reasons = [*a_reasons, "TDX metro station data unavailable"]
+        a_status, a_issues = _signal_status(required_missing=list(tdx_errors.keys()), optional_missing=[])
         if tdx_errors:
             a_details = {**a_details, "tdx_errors": tdx_errors}
+        a_details = {**a_details, "signal_status": a_status, "signal_issues": a_issues}
 
         weather_ok = True
         t_w0 = time.monotonic()
@@ -384,8 +399,11 @@ def recommend(
         w_score, w_details, w_reasons = score_weather(
             summary, destination=dest, preferences=normalized_query, settings=settings
         )
+        w_status, w_issues = _signal_status(required_missing=[] if weather_ok else ["weather"], optional_missing=[])
+        w_details = {**(w_details or {}), "signal_status": w_status, "signal_issues": w_issues}
         # --- 11c) Preference scoring (tag-based match against user weights) ---
         p_score, p_details, p_reasons = score_preference_match(dest, preferences=normalized_query, settings=settings)
+        p_details = {**(p_details or {}), "signal_status": "ok", "signal_issues": []}
 
         # --- 11d) Parking signal (optional) -> context scorer can blend it into crowd risk ---
         parking_score: float | None = None
@@ -409,6 +427,9 @@ def recommend(
             parking_availability_score=parking_score,
             parking_details=parking_details,
         )
+        c_optional_missing = ["parking"] if (parking_details and parking_details.get("error")) else []
+        c_status, c_issues = _signal_status(required_missing=[], optional_missing=c_optional_missing)
+        c_details = {**(c_details or {}), "signal_status": c_status, "signal_issues": c_issues}
 
         # ---- Step 11f: Build the explainable score breakdown used by API + UI ----
         # Each component contributes: contribution = score * normalized_weight (clamped into 0..1).
@@ -466,7 +487,19 @@ def recommend(
                 "tdx_metro": bool(metro_stations),
                 "tdx_parking": bool(parking_lots),
                 "weather": bool(weather_ok),
-            }
+            },
+            "signal_status": {
+                "accessibility": a_status,
+                "weather": w_status,
+                "preference": "ok",
+                "context": c_status,
+            },
+            "signal_issues": {
+                "accessibility": a_issues,
+                "weather": w_issues,
+                "preference": [],
+                "context": c_issues,
+            },
         }
         results.append(RecommendationItem(destination=dest, breakdown=breakdown, meta=item_meta))
     timings_ms["score_total"] = int((time.monotonic() - t_score) * 1000)
@@ -518,9 +551,26 @@ def recommend(
             "required_tags": list(normalized_query.required_tags or []),
             "excluded_tags": list(normalized_query.excluded_tags or []),
             "overrides_enabled": bool(normalized_query.settings_overrides),
+            "settings_overrides": normalized_query.settings_overrides or None,
+            "effective_tdx_city": str(settings.ingestion.tdx.city),
+            "timezone": str(settings.app.timezone),
+            "bulk_mode": True,
         },
         "warnings": warnings,
         "timings_ms": timings_ms,
+        "rules": {
+            "version": SIGNAL_RULES_VERSION,
+            "signal_status": {
+                "ok": "All required signals were available.",
+                "partial": "A non-critical signal was missing (score still computed with reduced confidence).",
+                "degraded": "A required upstream signal was missing (fallback logic applied).",
+            },
+            "fallbacks": {
+                "accessibility": "If transit signals are missing, uses origin distance and neutral transit density.",
+                "weather": "If weather is unavailable, uses neutral weather values.",
+                "context": "If parking is unavailable, crowd/parking risk is reduced to conservative defaults.",
+            },
+        },
     }
 
     # Return a structured result so clients (CLI/API/Web) all share the same response format.

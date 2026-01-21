@@ -128,6 +128,7 @@ def test_accessibility_uses_origin_distance_when_transit_missing():
     near = result.results[0]
     accessibility = next(c for c in near.breakdown.components if c.name == "accessibility")
     assert any("from origin" in r for r in accessibility.reasons)
+    assert accessibility.details.get("signal_status") == "degraded"
 
 
 def test_accessibility_prefers_more_bikes_when_enabled():

@@ -1,23 +1,14 @@
-"""
-Context feature (destination-level).
-
-This module estimates "context suitability" as a blend of:
-- crowd risk (time-window heuristics + optional parking-derived congestion proxy)
-- family-friendliness (district baseline + optional `family_friendly` tag bonus)
-
-It is intentionally heuristic and explainable, with all knobs living in config.
-"""
-
+# src/tripscore/features/context.py
 from __future__ import annotations
 
 import json
 from datetime import datetime
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import BaseModel, Field, TypeAdapter
 
 from tripscore.config.settings import Settings
-from tripscore.core.env import resolve_project_path
 from tripscore.domain.models import Destination, UserPreferences
 from tripscore.scoring.composite import clamp01, normalize_weights
 
@@ -32,13 +23,15 @@ class DistrictFactor(BaseModel):
 _DISTRICT_FACTORS_ADAPTER = TypeAdapter(list[DistrictFactor])
 
 
-def _overlaps_hours(start_hour: int, end_hour: int, window_start: int, window_end: int) -> bool:
+def _overlaps_hours(
+    start_hour: int, end_hour: int, window_start: int, window_end: int
+) -> bool:
     # Treat [start, end) as hours in local time, end can be 24.
     if end_hour < start_hour:
         # Overnight window; treat as overlapping if either segment overlaps.
-        return _overlaps_hours(start_hour, 24, window_start, window_end) or _overlaps_hours(
-            0, end_hour, window_start, window_end
-        )
+        return _overlaps_hours(
+            start_hour, 24, window_start, window_end
+        ) or _overlaps_hours(0, end_hour, window_start, window_end)
     return max(start_hour, window_start) < min(end_hour, window_end)
 
 
@@ -74,8 +67,7 @@ def _time_window_multiplier(
 
 @lru_cache
 def _load_district_factors(path: str) -> dict[tuple[str, str], DistrictFactor]:
-    resolved = resolve_project_path(path)
-    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
     factors = _DISTRICT_FACTORS_ADAPTER.validate_python(payload)
     out: dict[tuple[str, str], DistrictFactor] = {}
     for f in factors:
@@ -98,9 +90,14 @@ def score_context(
     district = (destination.district or "").strip().lower()
     factor = factors.get((city, district))
 
-    base_risk = float(factor.crowd_risk_base) if factor else float(cfg.crowd.default_risk)
+    base_risk = (
+        float(factor.crowd_risk_base) if factor else float(cfg.crowd.default_risk)
+    )
     multiplier, tag_adj = _time_window_multiplier(
-        preferences.time_window.start, preferences.time_window.end, settings=settings, tags=destination.tags
+        preferences.time_window.start,
+        preferences.time_window.end,
+        settings=settings,
+        tags=destination.tags,
     )
     baseline_risk = clamp01(base_risk * float(multiplier) + float(tag_adj))
 
@@ -115,8 +112,14 @@ def score_context(
 
     crowd_score = clamp01(1.0 - predicted_risk)
 
-    base_family = float(factor.family_friendliness_base) if factor else float(cfg.family.default_score)
-    family_bonus = float(cfg.family.tag_bonus) if "family_friendly" in destination.tags else 0.0
+    base_family = (
+        float(factor.family_friendliness_base)
+        if factor
+        else float(cfg.family.default_score)
+    )
+    family_bonus = (
+        float(cfg.family.tag_bonus) if "family_friendly" in destination.tags else 0.0
+    )
     family_score = clamp01(base_family + family_bonus)
 
     w_crowd = (
@@ -131,7 +134,10 @@ def score_context(
     )
     internal_weights = normalize_weights({"crowd": w_crowd, "family": w_family})
 
-    score = clamp01(internal_weights["crowd"] * crowd_score + internal_weights["family"] * family_score)
+    score = clamp01(
+        internal_weights["crowd"] * crowd_score
+        + internal_weights["family"] * family_score
+    )
 
     if predicted_risk < 0.33:
         crowd_label = "low"

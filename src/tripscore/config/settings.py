@@ -1,3 +1,4 @@
+# src/tripscore/config/settings.py
 """
 Application settings (Pydantic).
 
@@ -16,11 +17,11 @@ from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any, Literal
+from tripscore.core.env import load_dotenv_if_present
 
 import yaml
 from pydantic import BaseModel, Field
 
-from tripscore.core.env import load_dotenv_if_present, resolve_project_path
 
 def _read_package_yaml(filename: str) -> dict[str, Any]:
     """Read a YAML file packaged inside `tripscore.config`."""
@@ -54,17 +55,11 @@ class CacheSettings(BaseModel):
 
 class CatalogSettings(BaseModel):
     path: str = "data/catalogs/destinations.json"
-    details_path: str | None = None
 
 
 class TdxBusStopsSettings(BaseModel):
     top: int = 1000
     select: str = "StopUID,StopName,StopPosition"
-
-
-class TdxBusEstimatedTimeSettings(BaseModel):
-    top: int = 2000
-    select: str = "StopUID,StopName,RouteUID,RouteName,EstimateTime,StopSequence,Direction,UpdateTime"
 
 
 class TdxBikeStationsSettings(BaseModel):
@@ -91,22 +86,6 @@ class TdxParkingLotsSettings(BaseModel):
 class TdxParkingAvailabilitySettings(BaseModel):
     top: int = 1000
     select: str = "ParkingLotUID,AvailableSpaces,TotalSpaces"
-
-
-class TdxBusRoutesSettings(BaseModel):
-    top: int = 1000
-    select: str = "RouteUID,RouteName"
-
-
-class TdxRetrySettings(BaseModel):
-    max_attempts: int = Field(5, ge=0)
-    base_delay_seconds: float = Field(0.5, ge=0)
-    max_delay_seconds: float = Field(10.0, ge=0)
-
-class TdxBulkSettings(BaseModel):
-    enabled: bool = True
-    max_pages_per_call: int = Field(1, ge=1)
-    max_seconds_per_call: float | None = Field(20.0, ge=0)
 
 
 class MetroAccessibilitySettings(BaseModel):
@@ -150,20 +129,14 @@ class TdxSettings(BaseModel):
     token_url: str
     city: str = "Taipei"
     bus_stops: TdxBusStopsSettings = Field(default_factory=TdxBusStopsSettings)
-    bus_estimated_time: TdxBusEstimatedTimeSettings = Field(default_factory=TdxBusEstimatedTimeSettings)
     bike_stations: TdxBikeStationsSettings = Field(default_factory=TdxBikeStationsSettings)
     bike_availability: TdxBikeAvailabilitySettings = Field(default_factory=TdxBikeAvailabilitySettings)
     metro_stations: TdxMetroStationsSettings = Field(default_factory=TdxMetroStationsSettings)
     parking_lots: TdxParkingLotsSettings = Field(default_factory=TdxParkingLotsSettings)
     parking_availability: TdxParkingAvailabilitySettings = Field(default_factory=TdxParkingAvailabilitySettings)
-    bus_routes: TdxBusRoutesSettings = Field(default_factory=TdxBusRoutesSettings)
     parking_availability_cache_ttl_seconds: int = 300
     bike_availability_cache_ttl_seconds: int = 300
-    bus_estimated_time_cache_ttl_seconds: int = 30
     cache_ttl_seconds: int = 60 * 60 * 24
-    request_spacing_seconds: float = Field(0.0, ge=0)
-    retry: TdxRetrySettings = Field(default_factory=TdxRetrySettings)
-    bulk: TdxBulkSettings = Field(default_factory=TdxBulkSettings)
     accessibility: AccessibilitySettings = Field(default_factory=AccessibilitySettings)
     client_id: str | None = None
     client_secret: str | None = None
@@ -244,15 +217,15 @@ class ContextSettings(BaseModel):
     district_factors_path: str = "data/factors/district_factors.json"
     default_avoid_crowds_importance: float = Field(0.7, ge=0, le=1)
     default_family_friendly_importance: float = Field(0.3, ge=0, le=1)
-    crowd: ContextCrowdSettings = Field(default_factory=ContextCrowdSettings)
-    family: ContextFamilySettings = Field(default_factory=ContextFamilySettings)
+    crowd: ContextCrowdSettings = Field(default_factory=ContextCrowdSettings) # type: ignore
+    family: ContextFamilySettings = Field(default_factory=ContextFamilySettings) # type: ignore
 
 
 class FeaturesSettings(BaseModel):
     weather: WeatherFeatureSettings = Field(default_factory=WeatherFeatureSettings)
     parking: ParkingFeatureSettings = Field(default_factory=ParkingFeatureSettings)
     preference_match: PreferenceMatchSettings = Field(default_factory=PreferenceMatchSettings)
-    context: ContextSettings = Field(default_factory=ContextSettings)
+    context: ContextSettings = Field(default_factory=ContextSettings) # type: ignore
 
 
 class ScoringSettings(BaseModel):
@@ -294,6 +267,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 
     Note: We intentionally keep this whitelist small to avoid exposing unsafe overrides.
     """
+    load_dotenv_if_present()
     data = dict(data)
     cache_dir = os.getenv("TRIPSCORE_CACHE_DIR")
     if cache_dir:
@@ -316,16 +290,9 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
 @lru_cache
 def get_settings() -> Settings:
     """Load and validate settings (cached)."""
-    # Ensure repo-local `.env` is loaded (best-effort) before reading any env vars.
-    # This makes CLI/API/notebooks work without manually `source`-ing shell profiles.
     load_dotenv_if_present()
-
     config_path = os.getenv("TRIPSCORE_CONFIG_PATH")
-    raw = (
-        _read_yaml_file(resolve_project_path(config_path))
-        if config_path
-        else _read_package_yaml("defaults.yaml")
-    )
+    raw = _read_yaml_file(config_path) if config_path else _read_package_yaml("defaults.yaml")
     raw = _apply_env_overrides(raw)
     return Settings.model_validate(raw)
 
