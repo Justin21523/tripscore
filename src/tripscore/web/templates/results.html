@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<section class="panel panel-inspector">
+  <div class="panel-header">
+    <h2>Results</h2>
+    <div class="panel-header-actions">
+      <a class="btn btn-small" href="/search">Back to search</a>
+      <a id="open-map-link" class="btn btn-small" href="/map">Open map</a>
+      <button id="export-results-btn" type="button" class="btn btn-small">Export</button>
+      <button id="copy-selected-btn" type="button" class="btn btn-small">Copy selected</button>
+    </div>
+  </div>
+  {{ page_intro("Review recommendations as a concise decision brief, then compare alternatives.", "/map", "Inspect on Map", "/data", "Data status") }}
+
+  <div class="tabs" role="tablist" aria-label="Results panel">
+    <button id="tab-results" class="tab active" type="button" role="tab" aria-selected="true">List</button>
+    <button id="tab-details" class="tab" type="button" role="tab" aria-selected="false">Brief</button>
+    <button id="tab-compare" class="tab" type="button" role="tab" aria-selected="false">Compare</button>
+    <button id="tab-debug" class="tab" type="button" role="tab" aria-selected="false">Data</button>
+  </div>
+
+  <div id="panel-results" class="tab-panel active" role="tabpanel" aria-labelledby="tab-results">
+    <div id="policy-summary" class="policy-summary"></div>
+    <div class="panel-subheader">
+      <input id="result-search" type="text" placeholder="Search results…" />
+      <select id="result-sort" title="Sort">
+        <option value="rank" selected>Rank</option>
+        <option value="score_desc">Score (desc)</option>
+        <option value="score_asc">Score (asc)</option>
+        <option value="name_asc">Name (A→Z)</option>
+      </select>
+    </div>
+    <div class="panel-subheader">
+      <input id="result-tags" type="text" placeholder="Filter tags (comma-separated)…" list="catalog-tags" />
+      <input id="result-location" type="text" placeholder="Filter city/district…" list="catalog-locations" />
+    </div>
+    <div class="panel-subheader">
+      <label class="inline-field">
+        Min score
+        <input id="result-min-score" type="number" min="0" max="1" step="0.05" value="0" />
+      </label>
+      <div id="result-count" class="muted-inline"></div>
+    </div>
+    <ol id="results" class="result-list"></ol>
+  </div>
+
+  <div id="panel-details" class="tab-panel" role="tabpanel" aria-labelledby="tab-details">
+    <div id="inspector" class="inspector">
+      <p class="hint">Select a result to inspect its score breakdown.</p>
+    </div>
+  </div>
+
+  <div id="panel-compare" class="tab-panel" role="tabpanel" aria-labelledby="tab-compare">
+    <div id="compare-panel" class="compare-panel">
+      <p class="hint">Select up to 3 results to compare (checkbox in the list).</p>
+    </div>
+  </div>
+
+  <div id="panel-debug" class="tab-panel" role="tabpanel" aria-labelledby="tab-debug">
+    <div id="debug-meta" class="debug-meta"></div>
+    <div id="debug-tdx" class="debug-meta"></div>
+    <div class="debug-grid">
+      <div>
+        <div class="debug-title">Last response</div>
+        <pre id="debug-response" class="debug-pre">{}</pre>
+      </div>
+      <div>
+        <div class="debug-title">Selected item</div>
+        <pre id="debug-selected" class="debug-pre">{}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

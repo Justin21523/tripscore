@@ -1,3 +1,6 @@
+import { initThemeControls } from "./lib/theme.js";
+import { validatePreferencesPayload } from "./lib/validate.js";
+
 function toTaipeiIso(datetimeLocalValue) {
   if (!datetimeLocalValue) return null;
   // datetime-local yields "YYYY-MM-DDTHH:MM" without timezone.
@@ -11,8 +14,41 @@ function fromTaipeiIso(isoValue) {
   return s.replace(":00+08:00", "").replace(":00+00:00", "").replace("Z", "");
 }
 
+function apiBase() {
+  try {
+    const base = document.body && document.body.dataset ? String(document.body.dataset.apiBase || "") : "";
+    return base.trim().replace(/\/+$/, "");
+  } catch (_) {
+    return "";
+  }
+}
+
+function apiUrl(pathOrUrl) {
+  const s = String(pathOrUrl || "");
+  if (!s) return s;
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  const base = apiBase();
+  if (!base) return s;
+  if (s.startsWith("/")) return `${base}${s}`;
+  return `${base}/${s}`;
+}
+
+function supportsTdxCityOverride() {
+  try {
+    return Boolean(state.apiCapabilities && state.apiCapabilities.overrides && state.apiCapabilities.overrides.ingestion_tdx_city === true);
+  } catch (_) {
+    return false;
+  }
+}
+
 function el(id) {
   return document.getElementById(id);
+}
+
+function valueText(id, fallback = "") {
+  const node = el(id);
+  if (!node) return fallback;
+  return String(node.value || fallback);
 }
 
 function escapeHtml(s) {
@@ -25,17 +61,22 @@ function escapeHtml(s) {
 }
 
 function numberValue(id) {
-  const v = el(id).value;
+  const node = el(id);
+  if (!node) return null;
+  const v = node.value;
   return v === "" ? null : Number(v);
 }
 
 function setNumberValue(id, value) {
   const node = el(id);
+  if (!node) return;
   node.value = value === null || value === undefined ? "" : String(value);
 }
 
 function setTextValue(id, value) {
-  el(id).value = value || "";
+  const node = el(id);
+  if (!node) return;
+  node.value = value || "";
 }
 
 function parseTagList(value) {
@@ -78,6 +119,30 @@ function pruneEmpty(obj) {
   return out;
 }
 
+function removeOverridePath(obj, path) {
+  if (!obj || typeof obj !== "object") return obj;
+  const out = JSON.parse(JSON.stringify(obj));
+  let cur = out;
+  for (let i = 0; i < path.length - 1; i++) {
+    const k = path[i];
+    if (!cur || typeof cur !== "object" || !(k in cur)) return out;
+    cur = cur[k];
+  }
+  if (cur && typeof cur === "object") {
+    delete cur[path[path.length - 1]];
+  }
+  return pruneEmpty(out);
+}
+
+function sanitizeOverridesForServer(overrides) {
+  if (!overrides || typeof overrides !== "object") return overrides;
+  // Be conservative: only send ingestion.tdx.city when the backend explicitly supports it.
+  if (!supportsTdxCityOverride()) {
+    return removeOverridePath(overrides, ["ingestion", "tdx", "city"]);
+  }
+  return overrides;
+}
+
 function deepGet(obj, path) {
   let cur = obj;
   for (const key of path) {
@@ -101,14 +166,224 @@ async function copyText(text) {
   }
 }
 
+function diagnosticsPayload({ error } = {}) {
+  const rs = state.runState || loadRunState();
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    generated_at_unix: now,
+    page: state.page || currentPage(),
+    url: window.location.href,
+    api_base: apiBase(),
+    user_agent: navigator.userAgent,
+    run_state: rs,
+    last_query: rs && rs.last_query ? rs.last_query : null,
+    last_response_meta: rs && rs.last_response && rs.last_response.meta ? rs.last_response.meta : null,
+    selected_id: rs && rs.selected_id ? rs.selected_id : null,
+    compare_ids: rs && Array.isArray(rs.compare_ids) ? rs.compare_ids : [],
+    overview: { quality_report: state.qualityReport, tdx_status: state.tdxStatus, catalog_meta: state.catalogMeta },
+    error: error ? String(error) : null,
+  };
+  return payload;
+}
+
+async function copyDiagnostics({ error } = {}) {
+  const payload = diagnosticsPayload({ error });
+  const ok = await copyText(JSON.stringify(payload, null, 2));
+  showToast(ok ? "Copied diagnostics" : "Copy failed", ok ? "Diagnostics JSON copied to clipboard." : "Clipboard copy failed.", {
+    kind: ok ? "ok" : "warn",
+    timeoutMs: 5500,
+  });
+  if (ok) {
+    setStatus("Copied diagnostics JSON.");
+  } else {
+    setStatus("Copy failed.");
+  }
+  return ok;
+}
+
 const STORAGE = {
   lastQueryV1: "tripscore.last_query.v1",
   lastQueryV2: "tripscore.last_query.v2",
   lastResponseV1: "tripscore.last_response.v1",
+  runStateV1: "tripscore.run_state.v1",
+  runStateV2: "tripscore.run_state.v2",
   uiState: "tripscore.ui_state.v1",
   customPresets: "tripscore.custom_presets.v1",
   tdxJobId: "tripscore.tdx_job_id.v1",
 };
+
+function currentPage() {
+  return String((document.body && document.body.dataset && document.body.dataset.page) || "").trim();
+}
+
+function loadRunState() {
+  // v2 schema:
+  // { version: 2, saved_at_unix, last_query, last_response, selected_id, compare_ids, map_viewport, last_error }
+  try {
+    const raw = localStorage.getItem(STORAGE.runStateV2);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && typeof data === "object" && Number(data.version) === 2) return data;
+    }
+  } catch (_) {
+    // ignore
+  }
+  // v1 schema (migration source):
+  // { version: 1, saved_at_unix, last_query, last_response, selected_id, compare_ids, map_viewport }
+  try {
+    const raw = localStorage.getItem(STORAGE.runStateV1);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && typeof data === "object" && Number(data.version) === 1) {
+        return {
+          version: 2,
+          saved_at_unix: data.saved_at_unix || Math.floor(Date.now() / 1000),
+          last_query: data.last_query || null,
+          last_response: data.last_response || null,
+          selected_id: data.selected_id || null,
+          compare_ids: Array.isArray(data.compare_ids) ? data.compare_ids : [],
+          map_viewport: data.map_viewport || null,
+          search_map_viewport: data.search_map_viewport || null,
+          search_seed: data.search_seed || null,
+          search_selected_poi_id: data.search_selected_poi_id || null,
+          search_compare_poi_ids: Array.isArray(data.search_compare_poi_ids) ? data.search_compare_poi_ids : [],
+          search_recent_filters: Array.isArray(data.search_recent_filters) ? data.search_recent_filters : [],
+          data_city_filter: data.data_city_filter || "",
+          last_error: data.last_error || null,
+        };
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+  // Best-effort migration from older keys.
+  const out = { version: 2, saved_at_unix: Math.floor(Date.now() / 1000) };
+  try {
+    const q = loadLastQuery();
+    if (q) out.last_query = q;
+  } catch (_) {}
+  try {
+    const lr = loadLastResponse();
+    if (lr) out.last_response = lr;
+  } catch (_) {}
+  return out;
+}
+
+function saveRunState(patch) {
+  try {
+    const cur = loadRunState();
+    const next = {
+      ...cur,
+      ...(patch && typeof patch === "object" ? patch : {}),
+      version: 2,
+      saved_at_unix: Math.floor(Date.now() / 1000),
+    };
+    localStorage.setItem(STORAGE.runStateV2, JSON.stringify(next));
+    return next;
+  } catch (_) {
+    return null;
+  }
+}
+
+function qualitySeverity() {
+  const report = state.qualityReport;
+  const sev = report && report.overall && report.overall.severity ? String(report.overall.severity) : "info";
+  if (sev === "error" || sev === "warning" || sev === "info") return sev;
+  return "info";
+}
+
+function renderQualityStrip() {
+  const host = el("quality-strip");
+  if (!host) return;
+
+  const sev = qualitySeverity();
+  const rs = state.runState || loadRunState();
+  const hasRun = Boolean(rs && rs.last_response && rs.last_response.results && rs.last_response.results.length);
+
+  const st = state.tdxStatus && state.tdxStatus.daemon ? state.tdxStatus.daemon : null;
+  const d = st && st.daemon ? st.daemon : null;
+  const tdxm = st && st.tdx_client ? st.tdx_client : null;
+  const now = Math.floor(Date.now() / 1000);
+  const cooldown = d && d.global_cooldown_until_unix && now < Number(d.global_cooldown_until_unix);
+
+  const badge =
+    sev === "error"
+      ? `<span class="badge bad">error</span>`
+      : sev === "warning"
+      ? `<span class="badge warn">warning</span>`
+      : `<span class="badge ok">info</span>`;
+
+  const parts = [];
+  if (state.tdxStatus && state.tdxStatus.last_updated_at_unix) {
+    parts.push(`bulk ${formatUnix(state.tdxStatus.last_updated_at_unix)}`);
+  }
+  if (tdxm && tdxm.last_success_unix) parts.push(`tdx ok ${formatUnix(tdxm.last_success_unix)}`);
+  if (tdxm && typeof tdxm.requests_per_hour === "number") parts.push(`req/h ${tdxm.requests_per_hour}`);
+  if (cooldown) parts.push("cooldown");
+
+  host.innerHTML = `<div class="banner">
+    <div>
+      <div class="banner-title">Data quality ${badge}</div>
+      <div class="banner-meta">${escapeHtml(parts.length ? parts.join(" · ") : "Status unavailable.")}</div>
+    </div>
+    <div class="banner-actions">
+      <a class="btn btn-small" href="/data">Open Data status</a>
+      ${hasRun ? `<a class="btn btn-small" href="/results">Open Results</a>` : `<a class="btn btn-small" href="/plan">Open Plan</a>`}
+    </div>
+  </div>`;
+  host.hidden = false;
+}
+
+function renderNextActionBanner() {
+  const host = el("next-action");
+  if (!host) return;
+  const rs = state.runState || loadRunState();
+  const hasRun = Boolean(rs && rs.last_response && rs.last_response.results && rs.last_response.results.length);
+  const sev = qualitySeverity();
+  const page = state.page || currentPage() || "";
+
+  let title = "";
+  let meta = "";
+  let primaryHref = "";
+  let primaryText = "";
+  let secondaryHref = "";
+  let secondaryText = "";
+
+  if (!hasRun) {
+    title = "Next: run a scenario";
+    meta = "Start from Plan to generate recommendations and a score breakdown.";
+    primaryHref = "/plan";
+    primaryText = "Open Plan";
+    secondaryHref = "/search";
+    secondaryText = "Browse POIs";
+  } else if (sev === "warning" || sev === "error") {
+    title = "Next: confirm data limitations";
+    meta = "Some signals are missing or rate-limited. Check Data status to interpret degraded results.";
+    primaryHref = "/data";
+    primaryText = "Open Data status";
+    secondaryHref = page === "results" ? "/map" : "/results";
+    secondaryText = page === "results" ? "Open Map" : "Open Results";
+  } else {
+    title = "Next: inspect evidence";
+    meta = "Open Map to verify spatial context and toggle evidence layers.";
+    primaryHref = "/map";
+    primaryText = "Open Map";
+    secondaryHref = "/results";
+    secondaryText = "Open Results";
+  }
+
+  host.innerHTML = `<div class="banner">
+    <div>
+      <div class="banner-title">${escapeHtml(title)}</div>
+      <div class="banner-meta">${escapeHtml(meta)}</div>
+    </div>
+    <div class="banner-actions">
+      <a class="btn btn-primary btn-small" href="${escapeHtml(primaryHref)}">${escapeHtml(primaryText)}</a>
+      <a class="btn btn-small" href="${escapeHtml(secondaryHref)}">${escapeHtml(secondaryText)}</a>
+    </div>
+  </div>`;
+  host.hidden = false;
+}
 
 const state = {
   applyingPreset: false,
@@ -149,6 +424,17 @@ const state = {
   catalogMeta: null,
   tdxJobId: null,
   tdxJob: null,
+  runState: null,
+  page: null,
+  catalogDestinations: null,
+  poiById: {},
+  poiSelectedId: null,
+  poiCompareIds: [],
+  searchMap: null,
+  searchMarkerGroup: null,
+  searchMarkers: {},
+  apiHealthy: true,
+  apiCapabilities: null,
 };
 
 function setStatus(message) {
@@ -322,6 +608,38 @@ function renderBriefing() {
   const err429 = rows.filter((r) => r && Number(r.error_status) === 429).length;
   covNode.querySelector(".kpi-value").textContent = `${done}/${rows.length || "—"}`;
   covNode.querySelector(".kpi-meta").textContent = `unsupported ${unsupported} · missing ${missing} · 429 ${err429}`;
+
+  const lastCard = el("last-run-card");
+  const lastSummary = el("last-run-summary");
+  if (lastCard && lastSummary) {
+    const resp = state.lastResponse;
+    if (!resp || !Array.isArray(resp.results) || resp.results.length === 0) {
+      lastCard.hidden = true;
+    } else {
+      const best = resp.results[0];
+      const name = best.destination && best.destination.name ? best.destination.name : "—";
+      const score = best.breakdown && typeof best.breakdown.total_score === "number" ? best.breakdown.total_score : null;
+      const when =
+        resp.query && resp.query.time_window && resp.query.time_window.start && resp.query.time_window.end
+          ? `${resp.query.time_window.start} → ${resp.query.time_window.end}`
+          : resp.query && resp.query.start && resp.query.end
+          ? `${resp.query.start} → ${resp.query.end}`
+          : null;
+      const origin =
+        resp.query && resp.query.origin && typeof resp.query.origin.lat === "number" && typeof resp.query.origin.lon === "number"
+          ? `${resp.query.origin.lat.toFixed(4)}, ${resp.query.origin.lon.toFixed(4)}`
+          : null;
+      lastSummary.innerHTML = [
+        `<div><strong>Top</strong>: ${escapeHtml(name)}${score !== null ? ` (score ${Number(score).toFixed(3)})` : ""}</div>`,
+        when ? `<div><strong>When</strong>: ${escapeHtml(String(when))}</div>` : "",
+        origin ? `<div><strong>Origin</strong>: ${escapeHtml(origin)}</div>` : "",
+        `<div><strong>Results</strong>: ${escapeHtml(String(resp.results.length))}</div>`,
+      ]
+        .filter(Boolean)
+        .join("");
+      lastCard.hidden = false;
+    }
+  }
 }
 
 function renderDataStatus() {
@@ -364,6 +682,28 @@ function renderDataStatus() {
   });
   const cities = Object.keys(byCity).sort();
 
+  const cityFilter = el("data-city-filter");
+  if (cityFilter) {
+    if (!cityFilter.dataset.bound) {
+      cityFilter.dataset.bound = "1";
+      cityFilter.addEventListener("change", () => {
+        state.runState = saveRunState({ data_city_filter: String(cityFilter.value || "") });
+        renderDataStatus();
+      });
+    }
+    const saved = (state.runState && state.runState.data_city_filter) || "";
+    const current = String(cityFilter.value || saved || "");
+    cityFilter.innerHTML = `<option value="">All</option>`;
+    cities.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      cityFilter.appendChild(opt);
+    });
+    cityFilter.value = current;
+  }
+  const activeCity = cityFilter ? String(cityFilter.value || "") : "";
+
   const badge = (text, cls) => `<span class="badge ${cls || ""}">${escapeHtml(text)}</span>`;
   const cell = (r) => {
     if (!r) return badge("—", "");
@@ -380,16 +720,51 @@ function renderDataStatus() {
   datasets.forEach((ds) => html.push(`<th>${escapeHtml(ds)}</th>`));
   html.push("</tr></thead>");
   html.push("<tbody>");
-  cities.forEach((city) => {
+  (activeCity ? [activeCity].filter((c) => c in byCity) : cities).forEach((city) => {
     html.push("<tr>");
     html.push(`<td><strong>${escapeHtml(city)}</strong></td>`);
     datasets.forEach((ds) => {
-      html.push(`<td>${cell(byCity[city][ds])}</td>`);
+      html.push(
+        `<td data-city="${escapeHtml(city)}" data-dataset="${escapeHtml(ds)}">${cell(byCity[city][ds])}</td>`
+      );
     });
     html.push("</tr>");
   });
   html.push("</tbody></table>");
   matrix.innerHTML = html.join("");
+
+  const detail = el("data-cell-detail");
+  if (detail && !detail.dataset.bound) {
+    detail.dataset.bound = "1";
+    matrix.addEventListener("click", (e) => {
+      const td = e.target && e.target.closest ? e.target.closest("td[data-city][data-dataset]") : null;
+      if (!td) return;
+      const city = td.getAttribute("data-city") || "";
+      const ds = td.getAttribute("data-dataset") || "";
+      const r = byCity[city] ? byCity[city][ds] : null;
+      if (!r) {
+        detail.textContent = `${ds} @ ${city}: unknown`;
+        return;
+      }
+      if (r.unsupported) {
+        detail.textContent = `${ds} @ ${city}: unsupported by TDX (will not retry).`;
+        return;
+      }
+      if (r.missing) {
+        detail.textContent = `${ds} @ ${city}: missing (not fetched yet or no cache file).`;
+        return;
+      }
+      if (r.error_status) {
+        detail.textContent = `${ds} @ ${city}: error ${r.error_status}${Number(r.error_status) === 429 ? " (rate limited)" : ""}.`;
+        return;
+      }
+      if (r.done) {
+        detail.textContent = `${ds} @ ${city}: done.`;
+        return;
+      }
+      detail.textContent = `${ds} @ ${city}: in progress.`;
+    });
+  }
 
   const st = state.tdxStatus;
   if (!st || !st.daemon) {
@@ -416,17 +791,34 @@ function setBusy(busy, message) {
   if (message) setStatus(message);
 }
 
+function setApiHealthy(healthy, message) {
+  state.apiHealthy = Boolean(healthy);
+  const runBtn = el("run-btn");
+  const submitBtn = el("submit");
+  if (runBtn) runBtn.disabled = !state.apiHealthy;
+  if (submitBtn) submitBtn.disabled = !state.apiHealthy;
+  if (!state.apiHealthy) {
+    if (el("auto-run")) el("auto-run").checked = false;
+    state.autoRun = false;
+    saveUiState();
+  }
+  if (message) setStatus(message);
+}
+
 async function fetchJson(url) {
-  const resp = await fetch(url);
+  const resp = await fetch(apiUrl(url));
   if (!resp.ok) {
     let payload = null;
+    let text = "";
     try {
       payload = await resp.json();
     } catch (_) {
-      // ignore
+      try {
+        text = await resp.text();
+      } catch (_) {}
     }
-    const detail = payload && payload.detail !== undefined ? payload.detail : payload;
-    const msg = apiErrorMessage({ status: resp.status, detail });
+    const detail = payload && payload.detail !== undefined ? payload.detail : payload || text;
+    const msg = apiErrorMessage({ status: resp.status, detail: detail || text });
     const err = new Error(msg);
     err.status = resp.status;
     err.detail = detail;
@@ -436,6 +828,21 @@ async function fetchJson(url) {
 }
 
 function apiErrorMessage({ status, detail }) {
+  if (Array.isArray(detail) && detail.length) {
+    try {
+      const msgs = detail
+        .slice(0, 4)
+        .map((d) => {
+          const loc = Array.isArray(d.loc) ? d.loc.join(".") : d.loc;
+          return loc ? `${loc}: ${d.msg || "invalid"}` : String(d.msg || "invalid");
+        })
+        .filter(Boolean);
+      const suffix = detail.length > msgs.length ? ` (+${detail.length - msgs.length} more)` : "";
+      return `HTTP ${status}: ${msgs.join("; ")}${suffix}`;
+    } catch (_) {
+      return `HTTP ${status}: validation error`;
+    }
+  }
   if (detail && typeof detail === "object") {
     if (detail.message) return `${detail.code ? `${detail.code}: ` : ""}${detail.message}`;
     try {
@@ -516,10 +923,11 @@ function formatUnix(unixSeconds) {
 
 function confidenceForItem(item) {
   const comps = (item.breakdown && item.breakdown.components) || [];
-  const hasTdxErrors = comps.some(
-    (c) => c.details && c.details.tdx_errors && typeof c.details.tdx_errors === "object" && Object.keys(c.details.tdx_errors).length
-  );
-  if (hasTdxErrors) return { label: "Degraded", cls: "bad" };
+  const statuses = comps
+    .map((c) => (c && c.details ? String(c.details.signal_status || "") : ""))
+    .filter(Boolean);
+  if (statuses.includes("degraded")) return { label: "Degraded", cls: "bad" };
+  if (statuses.includes("partial")) return { label: "Partial", cls: "warn" };
 
   const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
   if (!dc) return { label: "Partial", cls: "warn" };
@@ -748,6 +1156,63 @@ function ensureMap(originLat, originLon) {
 
   state.map = m;
   return m;
+}
+
+function poiIcon({ selected, dimmed } = { selected: false, dimmed: false }) {
+  if (!window.L) return null;
+  const cls = ["poi-icon", selected ? "is-selected" : "", dimmed ? "is-dim" : ""].filter(Boolean).join(" ");
+  return L.divIcon({
+    className: cls,
+    html: `<div class="poi-icon-inner"><div class="poi-dot"></div><div class="poi-halo"></div></div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+    popupAnchor: [0, -10],
+  });
+}
+
+function ensureSearchMap() {
+  if (!window.L) return null;
+  if (!el("search-map")) return null;
+  if (state.searchMap) return state.searchMap;
+
+  const m = L.map("search-map", { zoomControl: true }).setView([25.0478, 121.517], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(m);
+
+  state.searchMap = m;
+  return m;
+}
+
+function wireViewportPersistence(map, storageKey) {
+  if (!map) return;
+  let timer = null;
+  const save = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      try {
+        const c = map.getCenter();
+        const vp = { center: { lat: c.lat, lon: c.lng }, zoom: map.getZoom() };
+        const patch = {};
+        patch[storageKey] = vp;
+        state.runState = saveRunState(patch);
+      } catch (_) {
+        // ignore
+      }
+    }, 500);
+  };
+  map.on("moveend", save);
+  map.on("zoomend", save);
+}
+
+function applyViewportFromRunState(map, storageKey) {
+  if (!map) return;
+  const rs = state.runState || loadRunState();
+  const vp = rs && rs[storageKey] ? rs[storageKey] : null;
+  if (vp && vp.center && typeof vp.center.lat === "number" && typeof vp.center.lon === "number") {
+    map.setView([vp.center.lat, vp.center.lon], Number(vp.zoom) || map.getZoom());
+  }
 }
 
 function updateMapLegend() {
@@ -1043,12 +1508,26 @@ function updateOrigin(lat, lon, { center, source } = { center: false, source: "m
   }
 }
 
+function currentOrigin() {
+  const lat = numberValue("origin-lat");
+  const lon = numberValue("origin-lon");
+  if (lat !== null && lon !== null) return { lat: Number(lat), lon: Number(lon) };
+  const rs = state.runState || loadRunState();
+  const q = rs && rs.last_query ? rs.last_query : null;
+  if (q && q.origin && typeof q.origin.lat === "number" && typeof q.origin.lon === "number") {
+    return { lat: q.origin.lat, lon: q.origin.lon };
+  }
+  return { lat: 25.0478, lon: 121.517 };
+}
+
 function selectResult(id, { focusTab, source } = { focusTab: true, source: "list" }) {
   if (!id || !(id in state.resultsById)) return;
   state.selectedId = id;
+  state.runState = saveRunState({ selected_id: id });
   const item = state.resultsById[id];
 
   const inspector = el("inspector");
+  if (!inspector) return;
   inspector.innerHTML = "";
 
   const dest = item.destination;
@@ -1092,10 +1571,9 @@ function selectResult(id, { focusTab, source } = { focusTab: true, source: "list
 
   const sub = document.createElement("div");
   sub.className = "submeta";
-  const originLat = numberValue("origin-lat");
-  const originLon = numberValue("origin-lon");
-  if (originLat !== null && originLon !== null) {
-    const d = haversineMeters(originLat, originLon, dest.location.lat, dest.location.lon);
+  const origin = currentOrigin();
+  if (origin) {
+    const d = haversineMeters(origin.lat, origin.lon, dest.location.lat, dest.location.lon);
     const pill = document.createElement("span");
     pill.className = "pill muted";
     pill.textContent = `origin → dest: ${formatMeters(d)}`;
@@ -1547,6 +2025,9 @@ function setResultsPayload(payload) {
   } catch (_) {
     // ignore
   }
+  state.runState = saveRunState({ last_response: payload, compare_ids: [] });
+  renderNextActionBanner();
+  renderQualityStrip();
 
   updateBriefStrip();
   renderPolicySummary();
@@ -1574,6 +2055,9 @@ function buildResultListItem(item, { rank }) {
   const breakdown = item.breakdown;
   const dc = item.meta && item.meta.data_completeness ? item.meta.data_completeness : null;
   const conf = confidenceForItem(item);
+  const brief = buildPolicyBrief(item);
+  const reasons = (brief && brief.reasons) || [];
+  const risks = (brief && brief.risks) || [];
 
   const title = document.createElement("div");
   title.className = "result-title";
@@ -1622,19 +2106,27 @@ function buildResultListItem(item, { rank }) {
   meta.appendChild(document.createTextNode(" "));
   meta.appendChild(makeBadge(conf.label, conf.cls));
 
-  const comps = document.createElement("div");
-  comps.className = "components";
-  breakdown.components.forEach((c) => {
-    const chip = document.createElement("div");
-    chip.className = "chip";
-    chip.textContent = `${c.name}: ${Number(c.contribution).toFixed(3)}`;
-    comps.appendChild(chip);
-  });
+  const summary = document.createElement("div");
+  summary.className = "result-summary";
+  const why = reasons.slice(0, 2).map((t) => `• ${t}`).join("\n");
+  const risk = risks && risks.length ? risks[0] : null;
+  summary.innerHTML = [
+    why
+      ? `<div class="result-why"><div class="result-section-title">Why</div><div class="result-lines">${escapeHtml(
+          why
+        )}</div></div>`
+      : "",
+    risk
+      ? `<div class="result-risk"><div class="result-section-title">Risk</div><div class="result-lines">${escapeHtml(
+          risk
+        )}</div></div>`
+      : "",
+  ].join("");
 
   li.appendChild(row);
   li.appendChild(meta);
   li.appendChild(scorebarForItem(item));
-  li.appendChild(comps);
+  if (summary.innerHTML.trim()) li.appendChild(summary);
 
   li.addEventListener("click", () => selectResult(dest.id, { focusTab: false, source: "list" }));
   li.addEventListener("mouseenter", () => {
@@ -1650,12 +2142,12 @@ function buildResultListItem(item, { rank }) {
 }
 
 function computeViewOrder() {
-  const search = String(el("result-search").value || "").trim().toLowerCase();
-  const tags = parseTagList(el("result-tags").value);
-  const loc = String(el("result-location").value || "").trim().toLowerCase();
+  const search = String(valueText("result-search", "")).trim().toLowerCase();
+  const tags = parseTagList(valueText("result-tags", ""));
+  const loc = String(valueText("result-location", "")).trim().toLowerCase();
   const locTokens = loc ? loc.split(/\s+/).filter(Boolean) : [];
-  const minScore = Number(el("result-min-score").value || 0) || 0;
-  const sort = String(el("result-sort").value || "rank");
+  const minScore = Number(valueText("result-min-score", "0")) || 0;
+  const sort = String(valueText("result-sort", "rank") || "rank");
 
   const items = state.baseOrder
     .map((id) => state.resultsById[id])
@@ -1704,6 +2196,7 @@ function computeViewOrder() {
 function updateView({ selectDefault } = { selectDefault: false }) {
   state.viewOrder = computeViewOrder();
   const resultsEl = el("results");
+  if (!resultsEl) return;
   resultsEl.innerHTML = "";
 
   state.viewOrder.forEach((id, idx) => {
@@ -1721,7 +2214,10 @@ function updateView({ selectDefault } = { selectDefault: false }) {
     if (first) selectResult(first, { focusTab: false });
   }
   if (!state.viewOrder.length) {
-    el("inspector").innerHTML = `<p class="hint">No results match your filters.</p>`;
+    const insp = el("inspector");
+    if (insp) {
+      insp.innerHTML = `<div class="empty-state"><div class="empty-title">No results</div><div class="empty-meta">Try relaxing filters or re-run from Plan.</div></div>`;
+    }
     renderDebug();
     updateRouteLineForSelected();
   }
@@ -1778,6 +2274,7 @@ function toggleCompare(id, { checked } = { checked: null }) {
   } else {
     state.compareIds = state.compareIds.filter((x) => x !== id);
   }
+  state.runState = saveRunState({ compare_ids: state.compareIds.slice(0, 3) });
   renderComparePanel();
 }
 
@@ -1804,6 +2301,7 @@ function renderComparePanel() {
   clear.textContent = "Clear";
   clear.addEventListener("click", () => {
     state.compareIds = [];
+    state.runState = saveRunState({ compare_ids: [] });
     // update checkboxes in list
     document.querySelectorAll("#results input[type=\"checkbox\"]").forEach((n) => (n.checked = false));
     renderComparePanel();
@@ -1993,10 +2491,13 @@ function renderMapFromOrder(order) {
   updateRouteLineForSelected();
   updateRouteLinesForAll();
   updateMapLegend();
+  updateDeepLinks();
 }
 
 function buildAdvancedOverrides() {
   if (!state.overridesEnabled) return null;
+  // If advanced controls aren't present on this page, skip overrides entirely.
+  if (!el("acc-bus-radius") && !el("wx-comfort-min") && !el("ctx-weekend-mult")) return null;
   const overrides = {
     ingestion: {
       tdx: {
@@ -2055,7 +2556,9 @@ function buildAdvancedOverrides() {
 }
 
 function parseExpertOverrides() {
-  const raw = String(el("overrides-json").value || "").trim();
+  const node = el("overrides-json");
+  if (!node) return null;
+  const raw = String(node.value || "").trim();
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -2071,30 +2574,47 @@ function parseExpertOverrides() {
 function buildPreferencesPayload() {
   const originLat = numberValue("origin-lat");
   const originLon = numberValue("origin-lon");
-  const startIso = toTaipeiIso(el("start").value);
-  const endIso = toTaipeiIso(el("end").value);
-  const presetSelection = el("preset").value || "";
+  const startIso = toTaipeiIso(el("start") ? el("start").value : "");
+  const endIso = toTaipeiIso(el("end") ? el("end").value : "");
+  const presetSelection = el("preset") ? el("preset").value || "" : "";
   const presetName = presetSelection && state.serverPresets[presetSelection] ? presetSelection : null;
 
   const contextCity = String((el("context-city") && el("context-city").value) || "").trim();
+
+  const numOr = (id, fallback) => {
+    const v = numberValue(id);
+    return v === null || !Number.isFinite(Number(v)) ? fallback : Number(v);
+  };
+  const textOr = (id, fallback) => {
+    const node = el(id);
+    if (!node) return fallback;
+    const v = String(node.value || "").trim();
+    return v ? v : fallback;
+  };
+
+  const s = state.settings || {};
+  const cwDefault = (s.scoring && s.scoring.composite_weights) || {};
+  const wxDefault = (s.ingestion && s.ingestion.weather && s.ingestion.weather.score_weights) || {};
+  const ctxDefault = (s.features && s.features.context) || {};
+  const tagDefaults = (s.features && s.features.preference_match && s.features.preference_match.tag_weights_default) || {};
 
   const payload = {
     origin: { lat: originLat, lon: originLon },
     time_window: { start: startIso, end: endIso },
     preset: presetName,
-    max_results: numberValue("top-n"),
-    weather_rain_importance: numberValue("avoid-rain"),
-    avoid_crowds_importance: numberValue("avoid-crowds"),
-    family_friendly_importance: numberValue("family-importance"),
+    max_results: numOr("top-n", 10),
+    weather_rain_importance: numOr("avoid-rain", wxDefault.rain ?? 0.7),
+    avoid_crowds_importance: numOr("avoid-crowds", ctxDefault.default_avoid_crowds_importance ?? 0.7),
+    family_friendly_importance: numOr("family-importance", ctxDefault.default_family_friendly_importance ?? 0.3),
     component_weights: {
-      accessibility: numberValue("w-accessibility"),
-      weather: numberValue("w-weather"),
-      preference: numberValue("w-preference"),
-      context: numberValue("w-context"),
+      accessibility: numOr("w-accessibility", cwDefault.accessibility ?? 0.35),
+      weather: numOr("w-weather", cwDefault.weather ?? 0.3),
+      preference: numOr("w-preference", cwDefault.preference ?? 0.2),
+      context: numOr("w-context", cwDefault.context ?? 0.15),
     },
     tag_weights: {},
-    required_tags: parseTagList(el("required-tags").value),
-    excluded_tags: parseTagList(el("excluded-tags").value),
+    required_tags: parseTagList(textOr("required-tags", "")),
+    excluded_tags: parseTagList(textOr("excluded-tags", "")),
   };
 
   [
@@ -2107,17 +2627,30 @@ function buildPreferencesPayload() {
   ].forEach(([tag, id]) => {
     const v = numberValue(id);
     if (v !== null) payload.tag_weights[tag] = v;
+    else if (tag in tagDefaults) payload.tag_weights[tag] = Number(tagDefaults[tag]);
   });
 
   const expert = parseExpertOverrides();
   const advanced = buildAdvancedOverrides();
   let overrides = expert || advanced;
   if (contextCity) {
-    if (!overrides) overrides = {};
-    overrides.ingestion = overrides.ingestion || {};
-    overrides.ingestion.tdx = overrides.ingestion.tdx || {};
-    if (!overrides.ingestion.tdx.city) overrides.ingestion.tdx.city = contextCity;
+    const supports = supportsTdxCityOverride();
+    if (supports) {
+      if (!overrides) overrides = {};
+      overrides.ingestion = overrides.ingestion || {};
+      overrides.ingestion.tdx = overrides.ingestion.tdx || {};
+      if (!overrides.ingestion.tdx.city) overrides.ingestion.tdx.city = contextCity;
+    } else if (state.apiCapabilities) {
+      // API is reachable but does not support the city override key (version mismatch).
+      showToast(
+        "Backend update needed",
+        "This server does not support overriding TDX city context. Restart the TripScore API from this repo to enable it.",
+        { kind: "warn", timeoutMs: 9000 }
+      );
+    }
   }
+  overrides = overrides ? pruneEmpty(overrides) : null;
+  overrides = overrides ? sanitizeOverridesForServer(overrides) : null;
   payload.settings_overrides = overrides ? pruneEmpty(overrides) : null;
 
   return payload;
@@ -2125,8 +2658,9 @@ function buildPreferencesPayload() {
 
 function saveLastQuery(payload) {
   try {
-    const saved = { ...payload, preset_selection: el("preset").value || "" };
+    const saved = { ...payload, preset_selection: el("preset") ? el("preset").value || "" : "" };
     localStorage.setItem(STORAGE.lastQueryV2, JSON.stringify(saved));
+    saveRunState({ last_query: saved });
   } catch (_) {
     // Ignore
   }
@@ -2211,38 +2745,41 @@ function openSetupStep(stepId) {
 }
 
 function updateBriefStrip() {
-  const startIso = toTaipeiIso(el("start").value);
-  const endIso = toTaipeiIso(el("end").value);
-  const when = startIso && endIso ? `${fromTaipeiIso(startIso)} → ${fromTaipeiIso(endIso)}` : "—";
-  const lat = numberValue("origin-lat");
-  const lon = numberValue("origin-lon");
-  const from = lat !== null && lon !== null ? `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}` : "—";
+  const strip = el("brief-strip");
+  if (!strip) return;
 
-  const preset = el("preset").value || "";
+  const startIso = toTaipeiIso(el("start") ? el("start").value : "");
+  const endIso = toTaipeiIso(el("end") ? el("end").value : "");
+  const when = startIso && endIso ? `${fromTaipeiIso(startIso)} → ${fromTaipeiIso(endIso)}` : "—";
+  const origin = currentOrigin();
+  const from = origin ? `${Number(origin.lat).toFixed(4)}, ${Number(origin.lon).toFixed(4)}` : "—";
+
+  const preset = el("preset") ? el("preset").value || "" : "";
   const goal = preset ? preset : "Custom";
   const topn = numberValue("top-n");
   const cityContext = String((el("context-city") && el("context-city").value) || state.tdxStatus?.city || "").trim();
 
-  el("brief-when").textContent = `When: ${when}`;
-  el("brief-from").textContent = `From: ${from}`;
+  if (el("brief-when")) el("brief-when").textContent = `When: ${when}`;
+  if (el("brief-from")) el("brief-from").textContent = `From: ${from}`;
   if (el("brief-city")) el("brief-city").textContent = `City: ${cityContext || "—"}`;
-  el("brief-goal").textContent = `Goal: ${goal}`;
-  el("brief-topn").textContent = `Top N: ${topn || "—"}`;
+  if (el("brief-goal")) el("brief-goal").textContent = `Goal: ${goal}`;
+  if (el("brief-topn")) el("brief-topn").textContent = `Top N: ${topn || "—"}`;
 
   const resp = state.lastResponse;
   const errors = resp && resp.results ? countTdxErrors(resp.results) : 0;
   const warnings = resp && resp.meta && Array.isArray(resp.meta.warnings) ? resp.meta.warnings.length : 0;
   const warnSuffix = warnings ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : "";
-  el("brief-data").textContent = errors ? `Data: Degraded (${errors})${warnSuffix}` : `Data: OK${warnSuffix}`;
+  if (el("brief-data"))
+    el("brief-data").textContent = errors ? `Data: Degraded (${errors})${warnSuffix}` : `Data: OK${warnSuffix}`;
 
   const cache = resp && resp.meta && resp.meta.cache ? resp.meta.cache : null;
   if (cache) {
     const hits = Number(cache.hits) || 0;
     const misses = Number(cache.misses) || 0;
     const stale = Number(cache.stale_fallbacks) || 0;
-    el("brief-cache").textContent = `Cache: hit ${hits} · miss ${misses} · stale ${stale}`;
+    if (el("brief-cache")) el("brief-cache").textContent = `Cache: hit ${hits} · miss ${misses} · stale ${stale}`;
   } else {
-    el("brief-cache").textContent = "Cache: —";
+    if (el("brief-cache")) el("brief-cache").textContent = "Cache: —";
   }
 
   if (state.tdxStatus && state.tdxStatus.last_updated_at_unix) {
@@ -2263,9 +2800,9 @@ function updateBriefStrip() {
       if (now < Number(d.global_cooldown_until_unix)) parts.push("cooldown");
     }
 
-    el("brief-updated").textContent = `Updated: ${parts.join(" · ")}`;
+    if (el("brief-updated")) el("brief-updated").textContent = `Updated: ${parts.join(" · ")}`;
   } else {
-    el("brief-updated").textContent = "Updated: —";
+    if (el("brief-updated")) el("brief-updated").textContent = "Updated: —";
   }
 }
 
@@ -2506,6 +3043,21 @@ async function loadCatalogMeta() {
   }
 }
 
+async function loadCatalogDestinations() {
+  try {
+    const data = await fetchJson("/api/catalog/destinations?include_details=1");
+    const rows = (data && data.destinations) || [];
+    state.catalogDestinations = Array.isArray(rows) ? rows : [];
+    state.poiById = {};
+    state.catalogDestinations.forEach((d) => {
+      if (d && d.id) state.poiById[String(d.id)] = d;
+    });
+  } catch (_) {
+    state.catalogDestinations = [];
+    state.poiById = {};
+  }
+}
+
 async function loadTdxCities() {
   const list = el("tdx-cities");
   if (!list) return;
@@ -2575,8 +3127,11 @@ async function loadOverview() {
     renderPolicySummary();
     renderBriefing();
     renderDataStatus();
+    if (state.page === "data") renderDataDashboardExtras();
     updateBriefStrip();
     renderDebug();
+    renderNextActionBanner();
+    renderQualityStrip();
   }
 }
 
@@ -2634,7 +3189,7 @@ async function startTdxJobFromUi() {
 
   setTdxJobStatus("Starting…");
   try {
-    const resp = await fetch("/api/tdx/prefetch", {
+    const resp = await fetch(apiUrl("/api/tdx/prefetch"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2672,7 +3227,7 @@ async function cancelTdxJob() {
   }
   setTdxJobStatus("Canceling…");
   try {
-    const resp = await fetch(`/api/tdx/prefetch/${encodeURIComponent(state.tdxJobId)}/cancel`, {
+    const resp = await fetch(apiUrl(`/api/tdx/prefetch/${encodeURIComponent(state.tdxJobId)}/cancel`), {
       method: "POST",
     });
     if (!resp.ok) {
@@ -2827,6 +3382,28 @@ async function loadServerSettings() {
   }
 }
 
+async function checkApiHealth() {
+  try {
+    const data = await fetchJson("/api/health");
+    if (!data || data.ok !== true || String(data.name || "") !== "TripScore") {
+      throw new Error("Unexpected API response.");
+    }
+    // If older backends do not expose capabilities, default to conservative behavior.
+    state.apiCapabilities = data.capabilities || { overrides: { ingestion_tdx_city: false } };
+    setApiHealthy(true);
+    return true;
+  } catch (e) {
+    state.apiCapabilities = null;
+    setApiHealthy(false, "API is unreachable or misconfigured. Set TRIPSCORE_UI_API_BASE and reload.");
+    showToast(
+      "API connection issue",
+      `TripScore UI cannot reach the TripScore API. Current base: '${apiBase() || "(same origin)"}'.`,
+      { kind: "warn", timeoutMs: 9000 }
+    );
+    return false;
+  }
+}
+
 function applySettingsDefaults() {
   if (!state.settings) return;
 
@@ -2974,6 +3551,7 @@ function loadLastResponse() {
 let autoRunTimer = null;
 function scheduleAutoRun(reason) {
   if (!state.autoRun) return;
+  if (state.page && state.page !== "plan") return;
   if (autoRunTimer) clearTimeout(autoRunTimer);
   autoRunTimer = setTimeout(() => {
     runRecommendation({ reason: `auto:${reason}` });
@@ -2981,6 +3559,10 @@ function scheduleAutoRun(reason) {
 }
 
 async function runRecommendation({ reason } = { reason: "manual" }) {
+  if (!state.apiHealthy) {
+    showToast("API not ready", "Fix API base (TRIPSCORE_UI_API_BASE) and reload.", { kind: "warn", timeoutMs: 6500 });
+    return;
+  }
   const statusPrefix = reason ? `[${reason}] ` : "";
   const started = performance.now();
   setBusy(true, `${statusPrefix}Requesting recommendations…`);
@@ -2988,7 +3570,12 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
   let payload;
   try {
     payload = buildPreferencesPayload();
+    if (payload && payload.settings_overrides) {
+      payload.settings_overrides = sanitizeOverridesForServer(payload.settings_overrides);
+    }
+    validatePreferencesPayload(payload);
   } catch (e) {
+    state.runState = saveRunState({ last_error: { stage: "build", message: String(e.message || e) } });
     setBusy(false, `Error: ${e.message}`);
     return;
   }
@@ -2997,16 +3584,54 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
   const prev = state.lastResponse;
 
   try {
-    const resp = await fetch("/api/recommendations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(apiErrorMessage({ status: resp.status, detail: err.detail || err }));
+    const url = apiUrl("/api/recommendations");
+    const post = async (body) => {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => null);
+        const errText = errJson ? "" : await resp.text().catch(() => "");
+        const detail = errJson && errJson.detail !== undefined ? errJson.detail : errJson || errText;
+        const msg = apiErrorMessage({ status: resp.status, detail });
+        const err = new Error(msg);
+        err.status = resp.status;
+        err.detail = detail;
+        throw err;
+      }
+      return await resp.json();
+    };
+
+    let data;
+    try {
+      data = await post(payload);
+    } catch (e) {
+      // Backwards-compatible fallback: older backends may reject ingestion.tdx.city overrides.
+      const isDisallowedCity =
+        Number(e.status) === 400 &&
+        typeof e.detail === "object" &&
+        e.detail &&
+        String(e.detail.message || "").includes("disallowed key") &&
+        String(e.detail.message || "").includes("ingestion.tdx.city");
+
+      if (isDisallowedCity && payload && payload.settings_overrides) {
+        showToast(
+          "City context unsupported",
+          "This backend rejected the TDX city override. Restart the API from the repo to enable it. Running without city context for now.",
+          { kind: "warn", timeoutMs: 9000 }
+        );
+        setStatus("Backend rejected city context override; retrying without it.");
+        const nextPayload = { ...payload, settings_overrides: removeOverridePath(payload.settings_overrides, ["ingestion", "tdx", "city"]) };
+        data = await post(nextPayload);
+      } else {
+        throw e;
+      }
     }
-    const data = await resp.json();
+
+    // Persist any non-2xx detail for debugging (if retries happened, store last successful URL anyway).
+    state.runState = saveRunState({ last_error: null });
     const ms = Math.round(performance.now() - started);
     setBusy(false, `${statusPrefix}Got ${data.results.length} results in ${ms}ms.`);
     openTab("results");
@@ -3036,7 +3661,25 @@ async function runRecommendation({ reason } = { reason: "manual" }) {
       // ignore
     }
   } catch (e) {
+    state.runState = saveRunState({
+      last_error: {
+        stage: "response",
+        url: apiUrl("/api/recommendations"),
+        status: e && e.status ? Number(e.status) : null,
+        detail: e && e.detail ? e.detail : String(e.message || e),
+      },
+    });
     setBusy(false, `${statusPrefix}Error: ${e.message}`);
+    if (String(e.message || "").includes("HTTP 429")) {
+      showToast("Rate limited", "TDX is rate-limited. Check Data status and wait for cooldown.", { kind: "warn", timeoutMs: 6500 });
+    } else if (String(e.message || "").includes("HTTP 422") || String(e.message || "").includes("HTTP 400")) {
+      showToast("Fix inputs", "Some inputs are invalid. Use Copy diagnostics and check the error detail.", { kind: "warn", timeoutMs: 6500 });
+      if (state.autoRun) {
+        state.autoRun = false;
+        if (el("auto-run")) el("auto-run").checked = false;
+        saveUiState();
+      }
+    }
   }
 }
 
@@ -3164,7 +3807,7 @@ function rotateHeading(delta) {
 }
 
 function applySearchFilter() {
-  const q = String(el("result-search").value || "").trim().toLowerCase();
+  const q = String(valueText("result-search", "")).trim().toLowerCase();
   document.querySelectorAll("#results li").forEach((node) => {
     const id = node.dataset.id;
     const item = id ? state.resultsById[id] : null;
@@ -3211,19 +3854,19 @@ function onGlobalKeyDown(evt) {
 
   if (evt.ctrlKey && evt.key === "Enter") {
     evt.preventDefault();
-    runRecommendation({ reason: "hotkey" });
+    triggerRunAction({ reason: "hotkey" });
     return;
   }
 
   if (evt.ctrlKey && (evt.key === "r" || evt.key === "R")) {
     evt.preventDefault();
-    resetAll();
+    triggerResetAction();
     return;
   }
 
   if (evt.ctrlKey && (evt.key === "s" || evt.key === "S")) {
     evt.preventDefault();
-    saveCustomPresetFromForm();
+    triggerSavePresetAction();
     return;
   }
 
@@ -3239,7 +3882,7 @@ function onGlobalKeyDown(evt) {
 
   if (evt.key === "m" || evt.key === "M") {
     state.pickOrigin = !state.pickOrigin;
-    el("pick-origin").checked = state.pickOrigin;
+    if (el("pick-origin")) el("pick-origin").checked = state.pickOrigin;
     saveUiState();
     setStatus(`Pick origin ${state.pickOrigin ? "enabled" : "disabled"}.`);
     return;
@@ -3247,7 +3890,7 @@ function onGlobalKeyDown(evt) {
 
   if (evt.key === "k" || evt.key === "K") {
     state.keyboardControls = !state.keyboardControls;
-    el("keyboard-controls").checked = state.keyboardControls;
+    if (el("keyboard-controls")) el("keyboard-controls").checked = state.keyboardControls;
     saveUiState();
     setStatus(`Keyboard controls ${state.keyboardControls ? "enabled" : "disabled"}.`);
     return;
@@ -3335,9 +3978,8 @@ function onGlobalKeyDown(evt) {
 
   if (evt.key === "c" || evt.key === "C") {
     evt.preventDefault();
-    const lat = numberValue("origin-lat");
-    const lon = numberValue("origin-lon");
-    if (lat !== null && lon !== null && state.map) state.map.setView([lat, lon], Math.max(state.map.getZoom(), 12));
+    const o = currentOrigin();
+    if (o && state.map) state.map.setView([o.lat, o.lon], Math.max(state.map.getZoom(), 12));
   }
 
   if (evt.key === "f" || evt.key === "F") {
@@ -3354,10 +3996,11 @@ function initDom() {
       runRecommendation({ reason: "submit" });
     });
   }
-  if (el("run-btn")) el("run-btn").addEventListener("click", () => runRecommendation({ reason: "run" }));
-  if (el("reset-btn")) el("reset-btn").addEventListener("click", resetAll);
-  if (el("save-preset-btn")) el("save-preset-btn").addEventListener("click", saveCustomPresetFromForm);
-  if (el("delete-preset-btn")) el("delete-preset-btn").addEventListener("click", deleteSelectedPreset);
+  if (el("run-btn")) el("run-btn").addEventListener("click", () => triggerRunAction({ reason: "run" }));
+  if (el("reset-btn")) el("reset-btn").addEventListener("click", () => triggerResetAction());
+  if (el("save-preset-btn")) el("save-preset-btn").addEventListener("click", () => triggerSavePresetAction());
+  if (el("delete-preset-btn")) el("delete-preset-btn").addEventListener("click", () => triggerDeletePresetAction());
+  if (el("copy-diagnostics-btn")) el("copy-diagnostics-btn").addEventListener("click", () => copyDiagnostics());
   if (el("help-btn")) el("help-btn").addEventListener("click", openHelp);
 
   if (el("clear-btn")) {
@@ -3385,6 +4028,7 @@ function initDom() {
   if (el("prev-btn")) el("prev-btn").addEventListener("click", () => selectRelative(-1, { focusTab: true }));
   if (el("next-btn")) el("next-btn").addEventListener("click", () => selectRelative(1, { focusTab: true }));
   if (el("export-btn")) el("export-btn").addEventListener("click", () => exportReport());
+  if (el("export-results-btn")) el("export-results-btn").addEventListener("click", () => exportResults());
 
   if (el("show-lines")) {
     el("show-lines").addEventListener("change", (e) => {
@@ -3602,9 +4246,541 @@ function initDom() {
   if (typeof wireAutoRunListeners === "function") wireAutoRunListeners();
 }
 
-(async function init() {
+function updateDeepLinks() {
+  const selected = state.selectedId || "";
+
+  const openMap = el("open-map-link");
+  if (openMap) {
+    const rs = state.runState || loadRunState();
+    const vp = rs && rs.map_viewport ? rs.map_viewport : null;
+    const params = new URLSearchParams();
+    if (selected) params.set("selected_id", selected);
+    if (vp && vp.center && typeof vp.center.lat === "number" && typeof vp.center.lon === "number" && vp.zoom !== undefined) {
+      params.set("lat", String(vp.center.lat));
+      params.set("lon", String(vp.center.lon));
+      params.set("zoom", String(vp.zoom));
+    }
+    const qs = params.toString();
+    openMap.href = qs ? `/map?${qs}` : "/map";
+  }
+
+  const back = el("back-results-link");
+  if (back) back.href = selected ? `/results#id=${encodeURIComponent(selected)}` : "/results";
+}
+
+function triggerRunAction({ reason } = { reason: "run" }) {
+  if (state.page === "plan" || el("query-form")) {
+    runRecommendation({ reason });
+    return;
+  }
+  showToast("Run", "Use the Plan page to change inputs and run the model.", { kind: "info", timeoutMs: 3500 });
+  window.location.assign("/plan");
+}
+
+function triggerResetAction() {
+  if (state.page === "plan" || el("query-form")) {
+    resetAll();
+    return;
+  }
+  window.location.assign("/plan");
+}
+
+function triggerSavePresetAction() {
+  if (state.page === "plan" || el("query-form")) {
+    saveCustomPresetFromForm();
+    return;
+  }
+  window.location.assign("/plan");
+}
+
+function triggerDeletePresetAction() {
+  if (state.page === "plan" || el("query-form")) {
+    deleteSelectedPreset();
+    return;
+  }
+  window.location.assign("/plan");
+}
+
+function restoreResultsFromStorage() {
+  const rs = state.runState || loadRunState();
+  const payload = (rs && rs.last_response) || loadLastResponse();
+  if (payload && payload.results && Array.isArray(payload.results)) setResultsPayload(payload);
+}
+
+function applySelectedFromLocation() {
+  const rs = state.runState || loadRunState();
+  const url = new URL(window.location.href);
+  const selected = url.searchParams.get("selected_id") || "";
+  const fromHash = (window.location.hash || "").match(/id=([^&]+)/);
+  const selectedId = selected || (fromHash ? decodeURIComponent(fromHash[1]) : "") || (rs && rs.selected_id) || "";
+  if (selectedId) state.selectedId = selectedId;
+}
+
+function applyViewportFromLocation() {
+  if (!state.map) return;
+  const rs = state.runState || loadRunState();
+  const url = new URL(window.location.href);
+  const lat = Number(url.searchParams.get("lat"));
+  const lon = Number(url.searchParams.get("lon"));
+  const zoom = Number(url.searchParams.get("zoom"));
+  if (Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(zoom)) {
+    state.map.setView([lat, lon], zoom);
+    return;
+  }
+  applyViewportFromRunState(state.map, "map_viewport");
+}
+
+function wireMapViewportPersistence() {
+  if (!state.map) return;
+  wireViewportPersistence(state.map, "map_viewport");
+  const refreshLinks = () => updateDeepLinks();
+  state.map.on("moveend", refreshLinks);
+  state.map.on("zoomend", refreshLinks);
+}
+
+function normalizeText(s) {
+  return String(s || "").trim().toLowerCase();
+}
+
+function poiMatchesFilters(poi, { q, tags, city, district }) {
+  if (!poi) return false;
+  const name = normalizeText(poi.name);
+  const desc = normalizeText(poi.description);
+  const addr = normalizeText(poi.address);
+  const poiCity = normalizeText(poi.city);
+  const poiDistrict = normalizeText(poi.district);
+  const blob = `${name} ${desc} ${addr} ${poiCity} ${poiDistrict}`.trim();
+
+  const qq = normalizeText(q);
+  if (qq && !blob.includes(qq)) return false;
+
+  const wantTags = parseTagList(tags);
+  if (wantTags.length) {
+    const have = new Set((poi.tags || []).map((t) => String(t).toLowerCase()));
+    for (const t of wantTags) if (!have.has(t)) return false;
+  }
+
+  const c = normalizeText(city);
+  if (c) {
+    const cTokens = c.split(/\s+/).filter(Boolean);
+    if (cTokens.length === 1) {
+      if (!poiCity.includes(cTokens[0]) && !poiDistrict.includes(cTokens[0])) return false;
+    } else {
+      const c0 = cTokens[0];
+      const rest = cTokens.slice(1).join(" ");
+      if (c0 && !poiCity.includes(c0)) return false;
+      if (rest && !poiDistrict.includes(rest)) return false;
+    }
+  }
+
+  const d = normalizeText(district);
+  if (d && !poiDistrict.includes(d)) return false;
+
+  return true;
+}
+
+function poiCompareToggle(id, { checked } = { checked: null }) {
+  const want = checked === null ? !state.poiCompareIds.includes(id) : Boolean(checked);
+  if (want) {
+    if (state.poiCompareIds.includes(id)) return;
+    if (state.poiCompareIds.length >= 3) {
+      showToast("Compare", "You can compare up to 3 POIs.", { kind: "warn", timeoutMs: 3500 });
+      return;
+    }
+    state.poiCompareIds.push(id);
+  } else {
+    state.poiCompareIds = state.poiCompareIds.filter((x) => x !== id);
+  }
+  state.runState = saveRunState({ search_compare_poi_ids: state.poiCompareIds.slice(0, 3) });
+  renderPoiCompare();
+}
+
+function renderPoiCompare() {
+  const host = el("poi-compare");
+  if (!host) return;
+  const ids = state.poiCompareIds.filter((id) => id in state.poiById);
+  if (!ids.length) {
+    host.innerHTML = `<p class="hint">Add POIs to compare from the list or marker detail.</p>`;
+    return;
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "compare-grid";
+  ids.forEach((id) => {
+    const poi = state.poiById[id];
+    const card = document.createElement("div");
+    card.className = "compare-card";
+    const title = document.createElement("div");
+    title.className = "compare-card-title";
+    title.textContent = poi.name || id;
+    const meta = document.createElement("div");
+    meta.className = "compare-card-meta";
+    meta.textContent = `${poi.city || ""} ${poi.district || ""}`.trim();
+
+    const tags = document.createElement("div");
+    tags.className = "tags";
+    (poi.tags || []).slice(0, 10).forEach((t) => {
+      const chip = document.createElement("span");
+      chip.className = "tag";
+      chip.textContent = t;
+      tags.appendChild(chip);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "compare-actions";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-small";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => poiCompareToggle(id, { checked: false }));
+    actions.appendChild(remove);
+
+    card.appendChild(title);
+    if (meta.textContent) card.appendChild(meta);
+    card.appendChild(tags);
+    card.appendChild(actions);
+    grid.appendChild(card);
+  });
+
+  const wrap = document.createElement("div");
+  const header = document.createElement("div");
+  header.className = "compare-header";
+  header.innerHTML = `<div class="compare-title">Comparing ${ids.length} POI${ids.length === 1 ? "" : "s"}</div>`;
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "btn btn-small";
+  clear.textContent = "Clear";
+  clear.addEventListener("click", () => {
+    state.poiCompareIds = [];
+    state.runState = saveRunState({ search_compare_poi_ids: [] });
+    renderPoiCompare();
+    document.querySelectorAll("#poi-list input[type=\"checkbox\"]").forEach((n) => (n.checked = false));
+  });
+  header.appendChild(clear);
+  wrap.appendChild(header);
+  wrap.appendChild(grid);
+
+  host.innerHTML = "";
+  host.appendChild(wrap);
+}
+
+function highlightPoiMarker(selectedId) {
+  const hasSel = Boolean(selectedId);
+  Object.entries(state.searchMarkers).forEach(([id, marker]) => {
+    const selected = id === selectedId;
+    const dimmed = hasSel && !selected;
+    marker.setIcon(poiIcon({ selected, dimmed }));
+  });
+}
+
+function renderPoiDetails(id) {
+  const host = el("poi-details");
+  if (!host) return;
+  const poi = id ? state.poiById[id] : null;
+  if (!poi) {
+    host.innerHTML = `<p class="hint">Select a marker or list row.</p>`;
+    return;
+  }
+
+  const meta = `${poi.city || ""} ${poi.district || ""}`.trim();
+  const actions = [];
+  actions.push(
+    `<button id="poi-send-plan" type="button" class="btn btn-primary btn-small">Send to Plan</button>`
+  );
+  actions.push(
+    `<button id="poi-compare-toggle" type="button" class="btn btn-small">${
+      state.poiCompareIds.includes(id) ? "Remove from compare" : "Add to compare"
+    }</button>`
+  );
+
+  host.innerHTML = [
+    `<div class="hero">`,
+    `<div class="title">${escapeHtml(poi.name || id)}</div>`,
+    meta ? `<div class="meta">${escapeHtml(meta)}</div>` : "",
+    `<div class="submeta"><span class="pill muted">${escapeHtml(
+      `${Number(poi.location.lat).toFixed(5)}, ${Number(poi.location.lon).toFixed(5)}`
+    )}</span></div>`,
+    `<div class="tags">${(poi.tags || [])
+      .slice(0, 14)
+      .map((t) => `<span class="tag">${escapeHtml(t)}</span>`)
+      .join("")}</div>`,
+    poi.opening_hours ? `<div class="story"><h4>Opening hours</h4><p>${escapeHtml(poi.opening_hours)}</p></div>` : "",
+    poi.address ? `<div class="story"><h4>Address</h4><p>${escapeHtml(poi.address)}</p></div>` : "",
+    poi.description ? `<div class="story"><h4>Description</h4><p>${escapeHtml(poi.description)}</p></div>` : "",
+    poi.url ? `<div class="story"><a href="${escapeHtml(poi.url)}" target="_blank" rel="noreferrer">Open link</a></div>` : "",
+    `<div class="panel-subheader">${actions.join(" ")}</div>`,
+  ].join("");
+
+  const send = el("poi-send-plan");
+  if (send) {
+    send.addEventListener("click", () => {
+      const seed = { id: poi.id, name: poi.name, city: poi.city, district: poi.district, tags: poi.tags || [] };
+      state.runState = saveRunState({ search_seed: seed, search_selected_poi_id: poi.id });
+      window.location.assign("/plan#seed");
+    });
+  }
+  const toggle = el("poi-compare-toggle");
+  if (toggle) toggle.addEventListener("click", () => poiCompareToggle(id, { checked: !state.poiCompareIds.includes(id) }));
+}
+
+function selectPoi(id, { center, source } = { center: true, source: "list" }) {
+  if (!id || !(id in state.poiById)) return;
+  state.poiSelectedId = id;
+  state.runState = saveRunState({ search_selected_poi_id: id });
+  renderPoiDetails(id);
+  highlightPoiMarker(id);
+
+  const map = state.searchMap;
+  const marker = state.searchMarkers[id];
+  const poi = state.poiById[id];
+  if (map && poi && center) {
+    const lat = Number(poi.location.lat);
+    const lon = Number(poi.location.lon);
+    const z = Math.max(map.getZoom(), 13);
+    if (marker && state.searchMarkerGroup && typeof state.searchMarkerGroup.zoomToShowLayer === "function") {
+      state.searchMarkerGroup.zoomToShowLayer(marker, () => map.setView([lat, lon], z));
+    } else {
+      map.setView([lat, lon], z);
+    }
+  }
+
+  // Sync list highlight
+  document.querySelectorAll("#poi-list li").forEach((li) => {
+    li.classList.toggle("selected", li.dataset.id === id);
+  });
+  setStatus(source === "map" ? "Selected POI from map." : "Selected POI.");
+}
+
+function renderPoiSearch() {
+  const list = el("poi-list");
+  const count = el("poi-count");
+  if (!list || !count) return;
+
+  const filters = {
+    q: valueText("poi-q", ""),
+    tags: valueText("poi-tags", ""),
+    city: valueText("poi-city", ""),
+    district: valueText("poi-district", ""),
+  };
+  const limit = Number(valueText("poi-limit", "500")) || 500;
+
+  const all = state.catalogDestinations || [];
+  const filtered = all.filter((p) => poiMatchesFilters(p, filters));
+  count.textContent = `${filtered.length} match${filtered.length === 1 ? "" : "es"}`;
+
+  renderSearchChipsAndRecents(filters);
+  scheduleSaveRecentSearch(filters);
+
+  if (!filtered.length) {
+    list.innerHTML = "";
+    const li = document.createElement("li");
+    li.className = "empty-state";
+    li.innerHTML = `<div class="empty-title">No POIs found</div><div class="empty-meta">Try clearing filters or using fewer tags.</div>`;
+    list.appendChild(li);
+    renderPoiMarkers([]);
+    return;
+  }
+
+  const shown = filtered.slice(0, limit);
+  list.innerHTML = "";
+  shown.forEach((poi) => {
+    const li = document.createElement("li");
+    li.dataset.id = poi.id;
+    li.className = "poi-row";
+    li.innerHTML = `
+      <div class="result-row">
+        <div class="result-title">${escapeHtml(poi.name || poi.id)}</div>
+        <label class="compare-toggle" title="Add/remove from compare">
+          <input type="checkbox" ${state.poiCompareIds.includes(poi.id) ? "checked" : ""} />
+        </label>
+      </div>
+      <div class="result-meta">${escapeHtml(`${poi.city || ""} ${poi.district || ""}`.trim())}</div>
+    `;
+    li.addEventListener("click", () => selectPoi(poi.id, { center: true, source: "list" }));
+    li.addEventListener("mouseenter", () => highlightPoiMarker(poi.id));
+    li.addEventListener("mouseleave", () => highlightPoiMarker(state.poiSelectedId));
+
+    const cb = li.querySelector("input[type=checkbox]");
+    if (cb) {
+      cb.addEventListener("click", (e) => e.stopPropagation());
+      cb.addEventListener("change", (e) => {
+        e.stopPropagation();
+        poiCompareToggle(poi.id, { checked: Boolean(cb.checked) });
+      });
+    }
+    list.appendChild(li);
+  });
+
+  renderPoiMarkers(shown);
+
+  if (filtered.length > limit) {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.style.marginTop = "8px";
+    note.textContent = `Showing first ${limit} results. Increase “Max shown” to see more.`;
+    list.appendChild(note);
+  }
+}
+
+function renderPoiMarkers(pois) {
+  const map = ensureSearchMap();
+  if (!map) return;
+
+  if (!state.searchMarkerGroup) {
+    const useCluster = Boolean(window.L && window.L.markerClusterGroup);
+    state.searchMarkerGroup = useCluster
+      ? L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 54 })
+      : L.layerGroup();
+    state.searchMarkerGroup.addTo(map);
+  }
+
+  try {
+    state.searchMarkerGroup.clearLayers();
+  } catch (_) {
+    // ignore
+  }
+  state.searchMarkers = {};
+
+  (pois || []).forEach((poi) => {
+    if (!poi || !poi.location) return;
+    const lat = Number(poi.location.lat);
+    const lon = Number(poi.location.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    const marker = L.marker([lat, lon], { icon: poiIcon({ selected: false, dimmed: false }) });
+    marker.on("click", () => selectPoi(poi.id, { center: false, source: "map" }));
+    state.searchMarkers[poi.id] = marker;
+    state.searchMarkerGroup.addLayer(marker);
+  });
+
+  highlightPoiMarker(state.poiSelectedId);
+}
+
+function renderSearchChipsAndRecents(filters) {
+  const chipHost = el("search-chips");
+  if (chipHost) {
+    const chips = [];
+    const add = (label, value) => {
+      const v = String(value || "").trim();
+      if (!v) return;
+      chips.push(`<span class="chip chip-filter"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(v)}</span>`);
+    };
+    add("q", filters.q);
+    add("tags", filters.tags);
+    add("city", filters.city);
+    add("district", filters.district);
+    chipHost.innerHTML = chips.length ? chips.join(" ") : "";
+  }
+
+  const recentsHost = el("search-recents");
+  if (!recentsHost) return;
+  const rs = state.runState || loadRunState();
+  const recents = rs && Array.isArray(rs.search_recent_filters) ? rs.search_recent_filters : [];
+  if (!recents.length) {
+    recentsHost.innerHTML = "";
+    return;
+  }
+  const rows = recents.slice(0, 5);
+  recentsHost.innerHTML = `
+    <div class="muted-inline" style="margin: 8px 0 6px">Recent searches</div>
+    <div class="recents-row">${rows
+      .map((r, idx) => {
+        const label = r && r.label ? String(r.label) : `Search ${idx + 1}`;
+        return `<button type="button" class="btn btn-small recent-btn" data-idx="${idx}">${escapeHtml(label)}</button>`;
+      })
+      .join("")}</div>
+  `;
+  recentsHost.querySelectorAll(".recent-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      const r = rows[idx];
+      if (!r) return;
+      setTextValue("poi-q", r.q || "");
+      setTextValue("poi-tags", r.tags || "");
+      setTextValue("poi-city", r.city || "");
+      setTextValue("poi-district", r.district || "");
+      renderPoiSearch();
+    });
+  });
+}
+
+let recentSearchTimer = null;
+function scheduleSaveRecentSearch(filters) {
+  if (!el("search-recents")) return;
+  if (recentSearchTimer) clearTimeout(recentSearchTimer);
+  recentSearchTimer = setTimeout(() => saveRecentSearch(filters), 650);
+}
+
+function saveRecentSearch(filters) {
+  try {
+    const f = {
+      q: String(filters.q || "").trim(),
+      tags: String(filters.tags || "").trim(),
+      city: String(filters.city || "").trim(),
+      district: String(filters.district || "").trim(),
+    };
+    const nonEmpty = Boolean(f.q || f.tags || f.city || f.district);
+    if (!nonEmpty) return;
+    const labelParts = [];
+    if (f.city) labelParts.push(f.city);
+    if (f.tags) labelParts.push(f.tags.split(",")[0].trim());
+    if (!labelParts.length && f.q) labelParts.push(f.q);
+    const label = labelParts.join(" · ").slice(0, 36);
+
+    const rs = state.runState || loadRunState();
+    const cur = rs && Array.isArray(rs.search_recent_filters) ? rs.search_recent_filters : [];
+    const key = JSON.stringify(f);
+    const next = [{ ...f, label, saved_at_unix: Math.floor(Date.now() / 1000) }]
+      .concat(cur.filter((x) => JSON.stringify({ q: x.q || "", tags: x.tags || "", city: x.city || "", district: x.district || "" }) !== key))
+      .slice(0, 5);
+    state.runState = saveRunState({ search_recent_filters: next });
+  } catch (_) {
+    // ignore
+  }
+}
+
+function renderDataDashboardExtras() {
+  const actions = el("data-actions");
+  const overview = el("data-overview");
+  if (overview) {
+    overview.textContent = JSON.stringify(
+      { quality_report: state.qualityReport, tdx_status: state.tdxStatus, catalog_meta: state.catalogMeta },
+      null,
+      2
+    );
+  }
+
+  if (actions) {
+    const lines = [];
+    const st = state.tdxStatus && state.tdxStatus.daemon ? state.tdxStatus.daemon : null;
+    const d = st && st.daemon ? st.daemon : null;
+    const tdxm = st && st.tdx_client ? st.tdx_client : null;
+    const now = Math.floor(Date.now() / 1000);
+    if (d && d.global_cooldown_until_unix && now < Number(d.global_cooldown_until_unix)) {
+      lines.push("TDX is in global cooldown due to upstream rate limits. Wait and let the daemon continue.");
+    }
+    if (tdxm && tdxm.status_counts && Number(tdxm.status_counts["429"] || 0) > 0) {
+      lines.push("High 429 rate: reduce real-time calls and prefer bulk cached layers (Map toggles).");
+    }
+    const sev = state.qualityReport && state.qualityReport.overall ? state.qualityReport.overall.severity : null;
+    if (sev === "warning" || sev === "error") {
+      lines.push("Quality is degraded. Use Results → Data tab to see which signals were missing.");
+    }
+    if (!lines.length) lines.push("No urgent actions. Continue bulk fetching and use cached layers for stability.");
+    actions.innerHTML = `<ul>${lines.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>`;
+  }
+
+  // copy-diagnostics button is bound globally in initDom()
+}
+
+export async function initPage(page) {
+  state.page = String(page || currentPage() || "").trim();
+  state.runState = loadRunState();
+
+  initThemeControls({ showToast });
+
   loadUiState();
   loadTdxJobId();
+
   if (el("auto-run")) el("auto-run").checked = state.autoRun;
   if (el("pick-origin")) el("pick-origin").checked = state.pickOrigin;
   if (el("enable-overrides")) el("enable-overrides").checked = state.overridesEnabled;
@@ -3613,68 +4789,124 @@ function initDom() {
   if (el("move-step")) el("move-step").value = String(state.moveStepM || 50);
   if (el("heading-deg")) setNumberValue("heading-deg", state.headingDeg || 0);
 
+  initDom();
+
+  await checkApiHealth();
   await loadServerSettings();
   await loadOverview();
-  await loadServerPresets();
-  loadCustomPresets();
-  if (el("preset")) rebuildPresetSelect();
+  renderNextActionBanner();
+  renderQualityStrip();
 
-  applySettingsDefaults();
+  applySelectedFromLocation();
 
-  const saved = loadLastQuery();
-  loadSavedQueryIntoForm(saved);
-  if (el("start") && el("end")) setDefaultTimes();
+  if (state.page === "plan") {
+    await loadServerPresets();
+    loadCustomPresets();
+    if (el("preset")) rebuildPresetSelect();
 
-  if (el("preset")) setPresetDescription(el("preset").value || "");
-  if (el("delete-preset-btn") && el("preset")) {
-    el("delete-preset-btn").disabled = !Boolean(state.customPresets[el("preset").value || ""]);
+    applySettingsDefaults();
+
+    const saved = loadLastQuery();
+    loadSavedQueryIntoForm(saved);
+    if (el("start") && el("end")) setDefaultTimes();
+
+    if (el("preset")) setPresetDescription(el("preset").value || "");
+    if (el("delete-preset-btn") && el("preset")) {
+      el("delete-preset-btn").disabled = !Boolean(state.customPresets[el("preset").value || ""]);
+    }
+
+    if (state.settings && state.settings.ingestion && state.settings.ingestion.tdx) {
+      const city = state.settings.ingestion.tdx.city;
+      if (el("tdx-city") && !el("tdx-city").value) el("tdx-city").value = city || "";
+      if (el("context-city") && !el("context-city").value) el("context-city").value = city || "";
+    }
+
+    // If the user came from /search, optionally seed plan fields.
+    try {
+      const seed = state.runState && state.runState.search_seed ? state.runState.search_seed : null;
+      if (seed && typeof seed === "object") {
+        const tagsEmpty = !String(valueText("required-tags", "")).trim();
+        const cityEmpty = !String(valueText("context-city", "")).trim();
+        if (cityEmpty && seed.city) setTextValue("context-city", String(seed.city));
+        if (tagsEmpty && Array.isArray(seed.tags) && seed.tags.length) setTextValue("required-tags", seed.tags.join(", "));
+        if (window.location.hash === "#seed") showToast("Seed applied", "Prefilled city/tags from the selected POI.", { kind: "ok", timeoutMs: 4500 });
+      }
+    } catch (_) {
+      // ignore
+    }
+  } else {
+    const q = state.runState && state.runState.last_query ? state.runState.last_query : null;
+    if (q && q.origin && typeof q.origin.lat === "number" && typeof q.origin.lon === "number") {
+      updateOrigin(q.origin.lat, q.origin.lon, { center: false, source: "restore" });
+    }
   }
 
-  if (state.settings && state.settings.ingestion && state.settings.ingestion.tdx) {
-    const city = state.settings.ingestion.tdx.city;
-    if (el("tdx-city") && !el("tdx-city").value) el("tdx-city").value = city || "";
-    if (el("context-city") && !el("context-city").value) el("context-city").value = city || "";
+  if (el("map")) {
+    const origin = currentOrigin();
+    ensureMap(origin.lat, origin.lon);
+    updateOrigin(origin.lat, origin.lon, { center: true, source: "manual" });
+    applyViewportFromLocation();
+    wireMapViewportPersistence();
+    if (el("show-lines")) el("show-lines").checked = state.showLines;
+    ["bus", "bike", "metro", "parking"].forEach((k) => {
+      if (state.mapLayers[k]) setLayerEnabled(k, true);
+    });
   }
 
-  if (el("origin-lat") && el("origin-lon")) {
-    const lat = numberValue("origin-lat") || 25.0478;
-    const lon = numberValue("origin-lon") || 121.517;
-    ensureMap(lat, lon);
-    updateOrigin(lat, lon, { center: true, source: "manual" });
+  if (el("search-map")) {
+    await loadCatalogDestinations();
+    ensureSearchMap();
+    applyViewportFromRunState(state.searchMap, "search_map_viewport");
+    wireViewportPersistence(state.searchMap, "search_map_viewport");
+
+    // Restore compare/selection.
+    const rs = state.runState || loadRunState();
+    const savedCompare = rs && Array.isArray(rs.search_compare_poi_ids) ? rs.search_compare_poi_ids : [];
+    state.poiCompareIds = savedCompare.map((x) => String(x)).slice(0, 3);
+    const savedSel = rs && rs.search_selected_poi_id ? String(rs.search_selected_poi_id) : null;
+    if (savedSel && savedSel in state.poiById) state.poiSelectedId = savedSel;
+
+    const bind = (id) => {
+      const node = el(id);
+      if (!node) return;
+      node.addEventListener("input", renderPoiSearch);
+      node.addEventListener("change", renderPoiSearch);
+    };
+    ["poi-q", "poi-tags", "poi-city", "poi-district", "poi-limit"].forEach(bind);
+    if (el("search-clear-btn")) {
+      el("search-clear-btn").addEventListener("click", () => {
+        setTextValue("poi-q", "");
+        setTextValue("poi-tags", "");
+        setTextValue("poi-city", "");
+        setTextValue("poi-district", "");
+        renderPoiSearch();
+      });
+    }
+
+    renderPoiCompare();
+    renderPoiSearch();
+    if (state.poiSelectedId) selectPoi(state.poiSelectedId, { center: false, source: "restore" });
   }
 
-  initDom();
-  if (el("show-lines")) el("show-lines").checked = state.showLines;
-  ["bus", "bike", "metro", "parking"].forEach((k) => {
-    if (state.mapLayers[k]) setLayerEnabled(k, true);
-  });
   openTab(state.activeTab || "results");
   if (document.querySelector(".step-section")) openSetupStep(state.activeSetupStep || "step-1");
+  SLIDER_IDS.forEach(bindSlider);
+
+  if (["briefing", "results", "map", "data"].includes(state.page)) restoreResultsFromStorage();
+  if (state.selectedId) selectResult(state.selectedId, { focusTab: state.page !== "map", source: "restore" });
+
+  updateDeepLinks();
   updateBriefStrip();
   if (typeof refreshTdxJob === "function") await refreshTdxJob();
-  SLIDER_IDS.forEach(bindSlider);
-  setStatus("Ready. Press Ctrl+Enter to run.");
+  if (state.page === "data") renderDataDashboardExtras();
 
-  // Restore last results for /results and /map pages.
-  try {
-    if (el("results") || el("map")) {
-      const last = loadLastResponse();
-      if (last && last.results && Array.isArray(last.results)) {
-        setResultsPayload(last);
-      }
-    }
-  } catch (_) {
-    // ignore
-  }
-
+  setStatus("Ready.");
   setInterval(loadOverview, 60_000);
-})();
+}
 
 function updateRouteLineForSelected() {
   if (!state.map) return;
-  const originLat = numberValue("origin-lat");
-  const originLon = numberValue("origin-lon");
-  if (originLat === null || originLon === null) return;
+  const origin = currentOrigin();
 
   const id = state.selectedId;
   const item = id ? state.resultsById[id] : null;
@@ -3687,7 +4919,7 @@ function updateRouteLineForSelected() {
   }
 
   const to = [item.destination.location.lat, item.destination.location.lon];
-  const from = [originLat, originLon];
+  const from = [origin.lat, origin.lon];
   const points = [from, to];
   if (!state.routeLine) {
     state.routeLine = L.polyline(points, { color: "#1f9ad6", weight: 3, opacity: 0.9 }).addTo(state.map);
@@ -3695,7 +4927,7 @@ function updateRouteLineForSelected() {
     state.routeLine.setLatLngs(points);
   }
 
-  const d = haversineMeters(originLat, originLon, item.destination.location.lat, item.destination.location.lon);
+  const d = haversineMeters(origin.lat, origin.lon, item.destination.location.lat, item.destination.location.lon);
   const text = `Distance ${formatMeters(d)}`;
   if (!state.routeLine.getTooltip()) {
     state.routeLine.bindTooltip(text, { permanent: true, direction: "center", className: "route-label" });
@@ -3712,10 +4944,8 @@ function updateRouteLinesForAll() {
   }
   if (!state.showLines) return;
 
-  const originLat = numberValue("origin-lat");
-  const originLon = numberValue("origin-lon");
-  if (originLat === null || originLon === null) return;
-  const from = [originLat, originLon];
+  const origin = currentOrigin();
+  const from = [origin.lat, origin.lon];
 
   state.viewOrder.slice(0, 30).forEach((id) => {
     const it = state.resultsById[id];
@@ -3728,18 +4958,16 @@ function updateRouteLinesForAll() {
 
 function fitToResults() {
   if (!state.map) return;
-  const originLat = numberValue("origin-lat");
-  const originLon = numberValue("origin-lon");
-  if (originLat === null || originLon === null) return;
+  const origin = currentOrigin();
 
-  const pts = [[originLat, originLon]];
+  const pts = [[origin.lat, origin.lon]];
   state.viewOrder.forEach((id) => {
     const it = state.resultsById[id];
     if (!it) return;
     pts.push([it.destination.location.lat, it.destination.location.lon]);
   });
   if (pts.length < 2) {
-    state.map.setView([originLat, originLon], Math.max(state.map.getZoom(), 12));
+    state.map.setView([origin.lat, origin.lon], Math.max(state.map.getZoom(), 12));
     return;
   }
   const bounds = L.latLngBounds(pts);
@@ -3748,17 +4976,15 @@ function fitToResults() {
 
 function fitToSelected() {
   if (!state.map) return;
-  const originLat = numberValue("origin-lat");
-  const originLon = numberValue("origin-lon");
-  if (originLat === null || originLon === null) return;
+  const origin = currentOrigin();
   const id = state.selectedId;
   const it = id ? state.resultsById[id] : null;
   if (!it) {
-    state.map.setView([originLat, originLon], Math.max(state.map.getZoom(), 12));
+    state.map.setView([origin.lat, origin.lon], Math.max(state.map.getZoom(), 12));
     return;
   }
   const pts = [
-    [originLat, originLon],
+    [origin.lat, origin.lon],
     [it.destination.location.lat, it.destination.location.lon],
   ];
   const bounds = L.latLngBounds(pts);
@@ -3838,5 +5064,34 @@ function exportReport() {
     showToast("Exported", "Downloaded tripscore report JSON.", { kind: "ok", timeoutMs: 3500 });
   } catch (e) {
     showToast("Export failed", String(e.message || e), { kind: "warn", timeoutMs: 4500 });
+  }
+}
+
+function exportResults() {
+  const payload = state.lastResponse || (state.runState && state.runState.last_response) || loadLastResponse();
+  if (!payload) {
+    showToast("Export", "No results to export yet.", { kind: "warn", timeoutMs: 3500 });
+    return;
+  }
+  try {
+    const now = new Date();
+    const out = {
+      exported_at: now.toISOString(),
+      kind: "tripscore_results",
+      page: state.page,
+      query: payload.query || null,
+      meta: payload.meta || null,
+      results: payload.results || [],
+    };
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `tripscore-results-${now.toISOString().slice(0, 19).replaceAll(":", "")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setStatus("Downloaded results JSON.");
+  } catch (e) {
+    setStatus(`Export error: ${e.message}`);
   }
 }

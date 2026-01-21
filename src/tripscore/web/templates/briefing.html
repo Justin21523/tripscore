@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<section class="page page-briefing">
+  {{ page_intro("A policy-style briefing that turns a trip question into a transparent recommendation with evidence and limitations.", "/plan", "Start planning", "/search", "Browse POIs") }}
+  <div class="briefing-hero">
+    <div class="briefing-kicker">Policy-style briefing</div>
+    <h2 class="briefing-title">Plan a trip with transparent, explainable recommendations.</h2>
+    <p class="briefing-lead">
+      TripScore combines offline catalogs and cached open-data signals to recommend destinations and explain why they
+      ranked.
+    </p>
+    <div class="briefing-cta">
+      <a href="/plan" class="btn btn-primary">Start planning</a>
+      <a href="/data" class="btn">View data status</a>
+      <a href="/results" class="btn">Open last results</a>
+      <a href="/map" class="btn">Open map</a>
+    </div>
+  </div>
+
+  <details id="last-run-card" class="panel-callout" style="margin-top: 14px" open hidden>
+    <summary>Last run</summary>
+    <div class="callout-body">
+      <div id="last-run-summary" class="muted">—</div>
+    </div>
+  </details>
+
+  <div class="kpi-grid">
+    <div class="kpi-card" id="kpi-top">
+      <div class="kpi-label">Top recommendation</div>
+      <div class="kpi-value">—</div>
+      <div class="kpi-meta">Run the planner to generate recommendations.</div>
+    </div>
+    <div class="kpi-card" id="kpi-quality">
+      <div class="kpi-label">Data quality</div>
+      <div class="kpi-value">—</div>
+      <div class="kpi-meta">Shows freshness, cache usage, and degraded signals.</div>
+    </div>
+    <div class="kpi-card" id="kpi-coverage">
+      <div class="kpi-label">Coverage progress</div>
+      <div class="kpi-value">—</div>
+      <div class="kpi-meta">Bulk datasets by city (done/unsupported/missing).</div>
+    </div>
+  </div>
+
+  <div class="briefing-section">
+    <h3>How it works</h3>
+    <div class="how-grid">
+      <div class="how-card">
+        <div class="how-title">Problem</div>
+        <p>
+          Choosing destinations is a decision under uncertainty: time windows, starting point, and data gaps can change
+          the best option.
+        </p>
+      </div>
+      <div class="how-card">
+        <div class="how-title">Method</div>
+        <p>
+          We score candidates with a transparent breakdown (accessibility, weather comfort, preferences, and context)
+          and show the evidence behind each component.
+        </p>
+      </div>
+      <div class="how-card">
+        <div class="how-title">Recommendation</div>
+        <p>
+          You get a ranked list plus a policy-style brief: suggested actions, who it fits, and risks/limitations when
+          signals are missing or rate-limited.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <details class="panel-callout" open>
+    <summary>Limits & interpretation</summary>
+    <div class="callout-body">
+      <ul class="howto-steps">
+        <li><strong>Not real-time for everything</strong>: bulk layers are cached; real-time ETAs are targeted.</li>
+        <li><strong>Missing data is handled conservatively</strong>: scores may degrade to neutral when signals fail.</li>
+        <li><strong>Use Data status</strong> to understand whether a gap is unsupported vs still fetching.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+{% endblock %}

@@ -1,0 +1,148 @@
+:root {
+  /* Typography */
+  --ts-font-sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --ts-font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --ts-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  /* RGB primitives (used with rgba(var(--ts-rgb-*), alpha)) */
+  --ts-rgb-white: 255, 255, 255;
+  --ts-rgb-black: 0, 0, 0;
+  --ts-rgb-ink: 15, 23, 42;
+  --ts-rgb-slate: 17, 24, 39;
+  --ts-rgb-dark: 10, 14, 28;
+  --ts-rgb-paper: 251, 251, 249;
+  --ts-rgb-bg: 243, 244, 242;
+  --ts-rgb-primary: 31, 91, 122;
+  --ts-rgb-primary-2: 42, 122, 161;
+  --ts-rgb-accent: 47, 111, 237;
+  --ts-rgb-success: 15, 157, 106;
+  --ts-rgb-warning: 183, 121, 31;
+  --ts-rgb-danger: 216, 58, 91;
+  --ts-rgb-cyan: 126, 224, 255;
+  --ts-rgb-result: 106, 169, 255;
+  --ts-rgb-layer-bus: 79, 70, 229;
+  --ts-rgb-layer-bike: 16, 185, 129;
+  --ts-rgb-layer-metro: 245, 158, 11;
+  --ts-rgb-layer-parking: 239, 68, 68;
+  --ts-rgb-alert: 255, 209, 102;
+
+  /* Semantic colors */
+  --ts-color-bg: #f3f4f2;
+  --ts-color-paper: #fbfbf9;
+  --ts-color-card: #ffffff;
+  --ts-color-text: #0f172a;
+  --ts-color-muted: #475569;
+  --ts-color-muted-2: #64748b;
+  --ts-color-border: rgba(var(--ts-rgb-ink), 0.12);
+  --ts-color-primary: #1f5b7a;
+  --ts-color-primary-2: #2a7aa1;
+  --ts-color-danger: #b4233b;
+  --ts-color-success: #0f7a53;
+  --ts-color-warning: #9a6a1c;
+
+  /* Surfaces */
+  --ts-surface-1: rgba(var(--ts-rgb-white), 0.82);
+  --ts-surface-2: rgba(var(--ts-rgb-white), 0.66);
+  --ts-surface-paper: linear-gradient(180deg, rgba(var(--ts-rgb-paper), 0.92), rgba(var(--ts-rgb-white), 0.72));
+  --ts-surface-paper-weak: rgba(var(--ts-rgb-paper), 0.76);
+  --ts-surface-panel: linear-gradient(180deg, rgba(var(--ts-rgb-paper), 0.92), rgba(var(--ts-rgb-white), 0.78));
+  --ts-surface-hero: linear-gradient(180deg, rgba(var(--ts-rgb-dark), 0.92), rgba(var(--ts-rgb-dark), 0.80));
+  --ts-color-on-dark: rgba(var(--ts-rgb-white), 0.92);
+  --ts-color-on-dark-muted: rgba(var(--ts-rgb-white), 0.78);
+
+  /* Shadows */
+  --ts-shadow-lg: 0 14px 34px rgba(var(--ts-rgb-ink), 0.09);
+  --ts-shadow-md: 0 10px 22px rgba(var(--ts-rgb-ink), 0.06);
+  --ts-shadow-float: 0 18px 30px rgba(var(--ts-rgb-black), 0.22);
+
+  /* Radii */
+  --ts-radius-lg: 16px;
+  --ts-radius-md: 14px;
+  --ts-radius-sm: 12px;
+
+  /* Spacing scale */
+  --ts-space-1: 8px;
+  --ts-space-2: 10px;
+  --ts-space-3: 12px;
+  --ts-space-4: 14px;
+  --ts-space-5: 18px;
+  --ts-space-6: 22px;
+  --ts-space-7: 28px;
+  --ts-space-8: 36px;
+
+  /* Layout */
+  --ts-side-width: 560px;
+  --ts-max-width: 1700px;
+  --ts-max-width-narrow: 1100px;
+
+  /* Z-index */
+  --ts-z-topbar: 10;
+  --ts-z-toast: 9999;
+
+  /* Focus ring */
+  --ts-focus-border: rgba(var(--ts-rgb-accent), 0.45);
+  --ts-focus-ring: 0 0 0 3px rgba(var(--ts-rgb-accent), 0.14);
+
+  /* App background */
+  --ts-gradient-app-bg: radial-gradient(900px 560px at 16% -6%, rgba(var(--ts-rgb-primary), 0.08), transparent 60%),
+    radial-gradient(740px 520px at 86% 0%, rgba(var(--ts-rgb-primary-2), 0.07), transparent 62%),
+    linear-gradient(180deg, rgba(var(--ts-rgb-white), 0.7), transparent 34%),
+    var(--ts-color-bg);
+
+  /* Legacy aliases (keep existing CSS stable while moving tokens here) */
+  --bg: var(--ts-color-bg);
+  --paper: var(--ts-color-paper);
+  --card: var(--ts-color-card);
+  --surface: var(--ts-surface-1);
+  --surface-2: var(--ts-surface-2);
+  --text: var(--ts-color-text);
+  --muted: var(--ts-color-muted);
+  --muted-2: var(--ts-color-muted-2);
+  --border: var(--ts-color-border);
+  --accent: var(--ts-color-primary);
+  --accent-2: var(--ts-color-primary-2);
+  --danger: var(--ts-color-danger);
+  --good: var(--ts-color-success);
+  --warn: var(--ts-color-warning);
+  --shadow: var(--ts-shadow-lg);
+  --shadow-soft: var(--ts-shadow-md);
+  --radius: var(--ts-radius-lg);
+  --radius-sm: var(--ts-radius-sm);
+}
+
+/* Themes (token overrides only) */
+html[data-theme="dark"] {
+  --ts-color-bg: #0b1220;
+  --ts-color-paper: #0f172a;
+  --ts-color-card: #0f172a;
+  --ts-color-text: #e6edf7;
+  --ts-color-muted: #b3c0d6;
+  --ts-color-muted-2: #92a3bf;
+  --ts-color-border: rgba(var(--ts-rgb-white), 0.12);
+  --ts-surface-1: rgba(var(--ts-rgb-slate), 0.60);
+  --ts-surface-2: rgba(var(--ts-rgb-slate), 0.45);
+  --ts-surface-paper: linear-gradient(180deg, rgba(var(--ts-rgb-slate), 0.72), rgba(var(--ts-rgb-slate), 0.56));
+  --ts-surface-paper-weak: rgba(var(--ts-rgb-slate), 0.52);
+  --ts-surface-panel: linear-gradient(180deg, rgba(var(--ts-rgb-slate), 0.66), rgba(var(--ts-rgb-slate), 0.50));
+  --ts-gradient-app-bg: radial-gradient(900px 560px at 16% -6%, rgba(var(--ts-rgb-primary), 0.24), transparent 60%),
+    radial-gradient(740px 520px at 86% 0%, rgba(var(--ts-rgb-primary-2), 0.20), transparent 62%),
+    linear-gradient(180deg, rgba(var(--ts-rgb-slate), 0.40), transparent 34%),
+    var(--ts-color-bg);
+  --ts-shadow-lg: 0 18px 60px rgba(var(--ts-rgb-black), 0.40);
+  --ts-shadow-md: 0 12px 28px rgba(var(--ts-rgb-black), 0.28);
+}
+
+html[data-theme="contrast"] {
+  --ts-color-bg: #ffffff;
+  --ts-color-paper: #ffffff;
+  --ts-color-card: #ffffff;
+  --ts-color-text: #000000;
+  --ts-color-muted: #111827;
+  --ts-color-muted-2: #111827;
+  --ts-color-border: rgba(var(--ts-rgb-black), 0.40);
+  --ts-shadow-lg: 0 0 0 rgba(var(--ts-rgb-black), 0);
+  --ts-shadow-md: 0 0 0 rgba(var(--ts-rgb-black), 0);
+  --ts-gradient-app-bg: var(--ts-color-bg);
+  --ts-focus-border: rgba(var(--ts-rgb-accent), 0.9);
+  --ts-focus-ring: 0 0 0 4px rgba(var(--ts-rgb-accent), 0.22);
+}

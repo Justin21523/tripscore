@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title or "TripScore" }}</title>
+    <link rel="stylesheet" href="/static/styles_tokens.css" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+  </head>
+  <body data-page="{{ page }}" data-api-base="{{ api_base or '' }}">
+    <header class="topbar">
+      <div class="brand">
+        <h1>TripScore</h1>
+        <p class="subtitle">Explainable, rule-based destination recommendations</p>
+      </div>
+      <div class="toolbar">
+        <label class="inline-field" title="Theme">
+          Theme
+          <select id="theme-select">
+            <option value="light" selected>Light</option>
+            <option value="dark">Dark</option>
+            <option value="contrast">High contrast</option>
+          </select>
+        </label>
+        <button id="run-btn" type="button" class="btn btn-primary" title="Ctrl+Enter">Run</button>
+        <label class="toggle" title="Auto-run (A)">
+          <input id="auto-run" type="checkbox" />
+          Auto-run
+        </label>
+        <button id="reset-btn" type="button" class="btn" title="Ctrl+R">Reset</button>
+        <button id="save-preset-btn" type="button" class="btn" title="Ctrl+S">Save Preset</button>
+        <button id="delete-preset-btn" type="button" class="btn" title="Delete custom preset">
+          Delete Preset
+        </button>
+        <button id="copy-diagnostics-btn" type="button" class="btn" title="Copy run state + diagnostics JSON">
+          Copy diagnostics
+        </button>
+        <button id="help-btn" type="button" class="btn" title="?">Shortcuts</button>
+      </div>
+    </header>
+
+    <div class="statusbar">
+      <div class="statusbar-inner">
+        <span id="status" class="status">Ready.</span>
+      </div>
+    </div>
+
+    <div id="next-action" class="next-action" hidden></div>
+    <div id="quality-strip" class="quality-strip" hidden></div>
+
+    <nav class="journey" aria-label="Journey navigation">
+      <div class="journey-inner">
+        <a class="journey-step {{ 'active' if page == 'home' else '' }}" href="/home">Home</a>
+        <span class="journey-sep">→</span>
+        <a class="journey-step {{ 'active' if page == 'plan' else '' }}" href="/plan">Plan</a>
+        <span class="journey-sep">→</span>
+        <a class="journey-step {{ 'active' if page == 'results' else '' }}" href="/results">Results</a>
+        <span class="journey-sep">→</span>
+        <a class="journey-step {{ 'active' if page == 'map' else '' }}" href="/map">Evidence</a>
+        <span class="journey-spacer"></span>
+        <a class="journey-step {{ 'active' if page == 'search' else '' }}" href="/search">Search</a>
+        <a class="journey-step {{ 'active' if page == 'data' else '' }}" href="/data">Data</a>
+        <a class="journey-step {{ 'active' if page == 'methods' else '' }}" href="/methods">Methods</a>
+      </div>
+    </nav>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-title">TripScore</div>
+        <nav class="sidebar-nav" aria-label="Primary navigation">
+          <div class="nav-section-title">Start</div>
+          <a class="nav-item {{ 'active' if page == 'home' else '' }}" href="/home">
+            <span class="nav-label">Home</span><span class="nav-desc">Overview and next action</span>
+          </a>
+          <a class="nav-item {{ 'active' if page == 'briefing' else '' }}" href="/briefing">
+            <span class="nav-label">Briefing</span><span class="nav-desc">What it is and limits</span>
+          </a>
+
+          <div class="nav-section-title">Journey</div>
+          <a class="nav-item {{ 'active' if page == 'plan' else '' }}" href="/plan">
+            <span class="nav-label">Plan</span><span class="nav-desc">Scenario inputs and run</span>
+          </a>
+          <a class="nav-item {{ 'active' if page == 'results' else '' }}" href="/results">
+            <span class="nav-label">Results</span><span class="nav-desc">Decision brief and compare</span>
+          </a>
+          <a class="nav-item {{ 'active' if page == 'map' else '' }}" href="/map">
+            <span class="nav-label">Evidence</span><span class="nav-desc">Map layers and context</span>
+          </a>
+
+          <div class="nav-section-title">Explore</div>
+          <a class="nav-item {{ 'active' if page == 'search' else '' }}" href="/search">
+            <span class="nav-label">Search</span><span class="nav-desc">POI catalog browser</span>
+          </a>
+
+          <div class="nav-section-title">Transparency</div>
+          <a class="nav-item {{ 'active' if page == 'data' else '' }}" href="/data">
+            <span class="nav-label">Data status</span><span class="nav-desc">Coverage and freshness</span>
+          </a>
+          <a class="nav-item {{ 'active' if page == 'methods' else '' }}" href="/methods">
+            <span class="nav-label">Methods</span><span class="nav-desc">Model and assumptions</span>
+          </a>
+        </nav>
+        <div class="sidebar-foot muted">
+          Tip: press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run.
+        </div>
+      </aside>
+
+      <main class="workspace">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <dialog id="help-modal" class="modal">
+      <form method="dialog" class="modal-card">
+        <div class="modal-header">
+          <h2>Keyboard Shortcuts</h2>
+          <button class="btn btn-small" value="cancel" type="submit">Close</button>
+        </div>
+        <div class="modal-body">
+          <ul class="shortcut-list">
+            <li><kbd>Ctrl</kbd> + <kbd>Enter</kbd>: Run</li>
+            <li><kbd>A</kbd>: Toggle auto-run</li>
+            <li><kbd>M</kbd>: Toggle “Pick origin”</li>
+            <li><kbd>K</kbd>: Toggle keyboard controls</li>
+            <li><kbd>W</kbd>/<kbd>A</kbd>/<kbd>S</kbd>/<kbd>D</kbd> or arrows: Move origin (step in meters)</li>
+            <li><kbd>N</kbd>/<kbd>P</kbd>: Next/previous result</li>
+            <li><kbd>F</kbd>: Fit map to selected</li>
+            <li><kbd>1</kbd>…<kbd>9</kbd>: Select result by rank</li>
+            <li><kbd>[</kbd>/<kbd>]</kbd>: Decrease/increase step</li>
+            <li><kbd>Q</kbd>/<kbd>E</kbd>: Rotate heading</li>
+            <li><kbd>C</kbd>: Center map on origin</li>
+            <li><kbd>?</kbd>: Open this help</li>
+          </ul>
+        </div>
+      </form>
+    </dialog>
+
+    <datalist id="catalog-tags"></datalist>
+    <datalist id="catalog-locations"></datalist>
+    <datalist id="tdx-cities"></datalist>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+      crossorigin=""
+    />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
+
+    <script type="module" src="/static/pages/{{ page }}.js"></script>
+    <div id="toast-host" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

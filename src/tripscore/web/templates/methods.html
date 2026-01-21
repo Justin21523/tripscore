@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<section class="page page-methods">
+  <div class="page-header">
+    <h2>Methods</h2>
+    <p class="muted">Purpose: understand scoring, assumptions, and how missing data is handled.</p>
+  </div>
+  {{ page_intro("Learn the scoring model, how we degrade under missing signals, and how to interpret results responsibly.", "/plan", "Open Plan", "/data", "Data status") }}
+  <div class="methods-grid">
+    <div class="data-card">
+      <div class="data-title">Scoring model</div>
+      <ul class="howto-steps">
+        <li><strong>Accessibility</strong>: proximity to transit layers and origin distance blend.</li>
+        <li><strong>Weather comfort</strong>: rain/temperature comfort with configurable weights.</li>
+        <li><strong>Preference match</strong>: tags (indoor/outdoor/culture/food/family/crowd_low).</li>
+        <li><strong>Context</strong>: crowd and family context signals when available.</li>
+      </ul>
+    </div>
+    <div class="data-card">
+      <div class="data-title">Degradation policy</div>
+      <ul class="howto-steps">
+        <li><strong>Rate limits</strong>: targeted real-time queries back off under cooldown.</li>
+        <li><strong>Missing data</strong>: components fall back to neutral rather than guessing.</li>
+        <li><strong>Auditability</strong>: each result includes component reasons and data quality hints.</li>
+      </ul>
+    </div>
+    <div class="data-card">
+      <div class="data-title">What to do if results look wrong</div>
+      <ul class="howto-steps">
+        <li>Verify the time window and starting point.</li>
+        <li>Check <strong>Data status</strong> for missing/unsupported datasets in your city.</li>
+        <li>Use Compare to test alternative scenarios (modes/weights).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+{% endblock %}

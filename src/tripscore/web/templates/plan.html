@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<section class="panel panel-controls">
+  <div class="panel-header">
+    <h2>Plan</h2>
+    <div class="panel-header-actions">
+      <a class="btn btn-small" href="/map" title="Pick origin and explore evidence layers on the map">Open map</a>
+      <a class="btn btn-small" href="/search" title="Browse POIs and seed a scenario">Search POIs</a>
+      <label class="toggle" title="K">
+        <input id="keyboard-controls" type="checkbox" checked />
+        Keyboard controls
+      </label>
+    </div>
+  </div>
+  {{ page_intro("Set time, origin, and priorities; run the model; then review results as a decision brief.", "/results", "Open Results", "/data", "Data status") }}
+
+  <div class="brief-strip" id="brief-strip">
+    <div class="brief-title">Brief</div>
+    <div class="brief-items">
+      <span id="brief-when" class="brief-item">When: —</span>
+      <span id="brief-from" class="brief-item">From: —</span>
+      <span id="brief-city" class="brief-item">City: —</span>
+      <span id="brief-goal" class="brief-item">Goal: —</span>
+      <span id="brief-topn" class="brief-item">Top N: —</span>
+      <span id="brief-data" class="brief-item">Data: —</span>
+      <span id="brief-cache" class="brief-item">Cache: —</span>
+      <span id="brief-updated" class="brief-item">Updated: —</span>
+    </div>
+  </div>
+
+  <details class="panel-callout howto-panel" open>
+    <summary>Why this step matters</summary>
+    <div class="callout-body">
+      <ol class="howto-steps">
+        <li><strong>Time</strong> changes crowd risk and accessibility (weekday/weekend effects).</li>
+        <li><strong>Origin</strong> changes the practical feasibility and distance-to-start.</li>
+        <li><strong>City context</strong> picks which bulk datasets are used when POI city is missing.</li>
+      </ol>
+    </div>
+  </details>
+
+  <details class="panel-callout" id="coverage-panel">
+    <summary>Data coverage</summary>
+    <div class="callout-body">
+      <div id="coverage-summary" class="muted">Loading…</div>
+      <div id="coverage-table" class="coverage-table"></div>
+    </div>
+  </details>
+
+  <div class="stepper" role="tablist" aria-label="Guided setup steps">
+    <button class="step-tab active" type="button" data-step="step-1" aria-selected="true">
+      <span class="step-num">1</span> Trip
+    </button>
+    <button class="step-tab" type="button" data-step="step-2" aria-selected="false">
+      <span class="step-num">2</span> Priorities
+    </button>
+    <button class="step-tab" type="button" data-step="step-3" aria-selected="false">
+      <span class="step-num">3</span> Preferences
+    </button>
+    <button class="step-tab" type="button" data-step="step-4" aria-selected="false">
+      <span class="step-num">4</span> Advanced
+    </button>
+  </div>
+
+  <form id="query-form">
+    <section id="step-1" class="step-section active" role="tabpanel" aria-label="Step 1: Trip">
+      <div class="step-header">
+        <div>
+          <div class="step-title">Step 1 — Trip</div>
+          <div class="step-subtitle">Set the time window and origin. Use the map page if you want visual picking.</div>
+        </div>
+        <div class="step-actions">
+          <button type="button" class="btn btn-small" data-next-step="step-2">Next</button>
+        </div>
+      </div>
+
+      <details open>
+        <summary>Query</summary>
+        <div class="section-body">
+          <div class="row row-2">
+            <label>
+              Preset
+              <select id="preset">
+                <option value="">Custom</option>
+              </select>
+            </label>
+            <label>
+              Preset description
+              <input id="preset-description" type="text" value="Custom" disabled />
+            </label>
+          </div>
+
+          <div class="row row-2">
+            <label>
+              City context (TDX)
+              <input
+                id="context-city"
+                type="text"
+                placeholder="e.g., Taipei"
+                list="tdx-cities"
+                title="Used as a fallback when a POI has no city; affects which bulk datasets are used."
+              />
+            </label>
+            <label>
+              Notes
+              <input type="text" value="Use /data to see which datasets are done vs unsupported." disabled />
+            </label>
+          </div>
+
+          <div class="row">
+            <label>
+              Origin lat
+              <input id="origin-lat" type="number" step="0.000001" value="25.0478" required />
+            </label>
+            <label>
+              Origin lon
+              <input id="origin-lon" type="number" step="0.000001" value="121.5170" required />
+            </label>
+            <label>
+              Top N results
+              <select id="top-n">
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="15">15</option>
+                <option value="20">20</option>
+              </select>
+            </label>
+            <label>
+              Move step (m)
+              <select id="move-step">
+                <option value="10">10</option>
+                <option value="50" selected>50</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="row row-2">
+            <div class="dpad">
+              <button id="move-n" type="button" class="btn btn-small" title="W / ↑">▲</button>
+              <button id="move-w" type="button" class="btn btn-small" title="A / ←">◀</button>
+              <button id="move-e" type="button" class="btn btn-small" title="D / →">▶</button>
+              <button id="move-s" type="button" class="btn btn-small" title="S / ↓">▼</button>
+            </div>
+            <div class="rotate">
+              <label>
+                Heading (deg)
+                <input id="heading-deg" type="number" min="0" max="359" step="1" value="0" />
+              </label>
+              <div class="rotate-buttons">
+                <button id="rotate-left" type="button" class="btn btn-small" title="Q">⟲</button>
+                <button id="rotate-right" type="button" class="btn btn-small" title="E">⟳</button>
+                <button id="center-origin-btn" type="button" class="btn btn-small" title="C">
+                  Center on map page
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <label>
+              Start (Asia/Taipei)
+              <input id="start" type="datetime-local" required />
+            </label>
+            <label>
+              End (Asia/Taipei)
+              <input id="end" type="datetime-local" required />
+            </label>
+            <label>
+              Quick window
+              <select id="quick-window">
+                <option value="">(none)</option>
+                <option value="2">+2h</option>
+                <option value="4" selected>+4h</option>
+                <option value="8">+8h</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- The remaining steps match the existing UI controls (sliders + advanced tuning). -->
+    <section id="step-2" class="step-section" role="tabpanel" aria-label="Step 2: Priorities">
+      <div class="step-header">
+        <div>
+          <div class="step-title">Step 2 — Priorities</div>
+          <div class="step-subtitle">Tune how the system balances accessibility, weather, and preferences.</div>
+        </div>
+        <div class="step-actions">
+          <button id="mode-balanced" type="button" class="btn btn-small">Balanced</button>
+          <button id="mode-rainy" type="button" class="btn btn-small">Rainy day</button>
+          <button id="mode-family" type="button" class="btn btn-small">Family</button>
+          <button type="button" class="btn btn-small" data-prev-step="step-1">Back</button>
+          <button type="button" class="btn btn-small" data-next-step="step-3">Next</button>
+        </div>
+      </div>
+      <details open>
+        <summary>Composite weights</summary>
+        <div class="section-body">
+          <p class="hint">Balance the four explainable components. Values are 0..1; Low/Medium/High is just a hint.</p>
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Accessibility</strong> · how easy it is to reach</div>
+              <input id="w-accessibility" type="range" min="0" max="1" step="0.05" value="0.35" />
+              <div class="slider-meta"><span id="w-accessibility-label">—</span><span id="w-accessibility-value">—</span></div>
+            </div>
+            <div class="slider">
+              <div class="muted-inline"><strong>Weather</strong> · comfort and rain penalty</div>
+              <input id="w-weather" type="range" min="0" max="1" step="0.05" value="0.30" />
+              <div class="slider-meta"><span id="w-weather-label">—</span><span id="w-weather-value">—</span></div>
+            </div>
+          </div>
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Preferences</strong> · tags and intent match</div>
+              <input id="w-preference" type="range" min="0" max="1" step="0.05" value="0.20" />
+              <div class="slider-meta"><span id="w-preference-label">—</span><span id="w-preference-value">—</span></div>
+            </div>
+            <div class="slider">
+              <div class="muted-inline"><strong>Context</strong> · crowds, family friendliness</div>
+              <input id="w-context" type="range" min="0" max="1" step="0.05" value="0.15" />
+              <div class="slider-meta"><span id="w-context-label">—</span><span id="w-context-value">—</span></div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Importance sliders</summary>
+        <div class="section-body">
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Avoid rain</strong> · penalize rainy conditions</div>
+              <input id="avoid-rain" type="range" min="0" max="1" step="0.05" value="0.70" />
+              <div class="slider-meta"><span id="avoid-rain-label">—</span><span id="avoid-rain-value">—</span></div>
+            </div>
+            <div class="slider">
+              <div class="muted-inline"><strong>Avoid crowds</strong> · weekend/crowd pressure</div>
+              <input id="avoid-crowds" type="range" min="0" max="1" step="0.05" value="0.70" />
+              <div class="slider-meta"><span id="avoid-crowds-label">—</span><span id="avoid-crowds-value">—</span></div>
+            </div>
+          </div>
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Family friendly</strong> · boost family tags and safer options</div>
+              <input id="family-importance" type="range" min="0" max="1" step="0.05" value="0.30" />
+              <div class="slider-meta"><span id="family-importance-label">—</span><span id="family-importance-value">—</span></div>
+            </div>
+            <div class="panel-callout" style="margin: 0">
+              <div class="callout-body">
+                <div class="page-purpose">Mode shortcuts</div>
+                <p class="page-purpose-meta">Use buttons above to quickly apply a scenario profile.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="step-3" class="step-section" role="tabpanel" aria-label="Step 3: Preferences">
+      <div class="step-header">
+        <div>
+          <div class="step-title">Step 3 — Preferences</div>
+          <div class="step-subtitle">Express what you care about: indoor/outdoor, culture, food, crowds.</div>
+        </div>
+        <div class="step-actions">
+          <button type="button" class="btn btn-small" data-prev-step="step-2">Back</button>
+          <button type="button" class="btn btn-small" data-next-step="step-4">Next</button>
+        </div>
+      </div>
+      <details open>
+        <summary>Tag weights</summary>
+        <div class="section-body">
+          <p class="hint">These weights shape what “fit” means. Keep most sliders moderate unless you are sure.</p>
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Indoor</strong></div>
+              <input id="tag-indoor" type="range" min="0" max="1" step="0.05" value="0.50" />
+              <div class="slider-meta"><span id="tag-indoor-label">—</span><span id="tag-indoor-value">—</span></div>
+            </div>
+            <div class="slider">
+              <div class="muted-inline"><strong>Outdoor</strong></div>
+              <input id="tag-outdoor" type="range" min="0" max="1" step="0.05" value="0.50" />
+              <div class="slider-meta"><span id="tag-outdoor-label">—</span><span id="tag-outdoor-value">—</span></div>
+            </div>
+          </div>
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Culture</strong></div>
+              <input id="tag-culture" type="range" min="0" max="1" step="0.05" value="0.50" />
+              <div class="slider-meta"><span id="tag-culture-label">—</span><span id="tag-culture-value">—</span></div>
+            </div>
+            <div class="slider">
+              <div class="muted-inline"><strong>Food</strong></div>
+              <input id="tag-food" type="range" min="0" max="1" step="0.05" value="0.50" />
+              <div class="slider-meta"><span id="tag-food-label">—</span><span id="tag-food-value">—</span></div>
+            </div>
+          </div>
+          <div class="row row-2">
+            <div class="slider">
+              <div class="muted-inline"><strong>Family friendly</strong></div>
+              <input id="tag-family" type="range" min="0" max="1" step="0.05" value="0.30" />
+              <div class="slider-meta"><span id="tag-family-label">—</span><span id="tag-family-value">—</span></div>
+            </div>
+            <div class="slider">
+              <div class="muted-inline"><strong>Low crowd</strong></div>
+              <input id="tag-crowd" type="range" min="0" max="1" step="0.05" value="0.40" />
+              <div class="slider-meta"><span id="tag-crowd-label">—</span><span id="tag-crowd-value">—</span></div>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Hard constraints</summary>
+        <div class="section-body">
+          <div class="row row-2">
+            <label>
+              Required tags (comma-separated)
+              <input id="required-tags" type="text" placeholder="e.g., indoor, culture" list="catalog-tags" />
+            </label>
+            <label>
+              Excluded tags (comma-separated)
+              <input id="excluded-tags" type="text" placeholder="e.g., outdoor" list="catalog-tags" />
+            </label>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="step-4" class="step-section" role="tabpanel" aria-label="Step 4: Advanced">
+      <div class="step-header">
+        <div>
+          <div class="step-title">Step 4 — Advanced</div>
+          <div class="step-subtitle">Expert tuning overrides and diagnostics.</div>
+        </div>
+        <div class="step-actions">
+          <button type="button" class="btn btn-small" data-prev-step="step-3">Back</button>
+        </div>
+      </div>
+      <details class="panel-callout">
+        <summary>Expert overrides</summary>
+        <div class="callout-body">
+          <p class="hint">
+            Use advanced overrides sparingly. Misconfiguration can make scores hard to interpret.
+          </p>
+          <div class="row row-2">
+            <label>
+              <span>Enable structured overrides</span>
+              <input id="enable-overrides" type="checkbox" />
+            </label>
+            <div class="panel-callout" style="margin: 0">
+              <div class="callout-body">
+                <div class="page-purpose">Diagnostics</div>
+                <p class="page-purpose-meta">If results look degraded, check Data status and copy diagnostics.</p>
+              </div>
+            </div>
+          </div>
+          <div id="advanced-overrides">
+            <div class="row row-2">
+              <label>
+                Accessibility radius (m)
+                <input id="acc-bus-radius" type="number" min="100" max="5000" step="50" />
+              </label>
+              <label>
+                Transit count cap
+                <input id="acc-bus-cap" type="number" min="10" max="500" step="10" />
+              </label>
+            </div>
+            <div class="row row-2">
+              <label>
+                Weather comfort min (°C)
+                <input id="wx-comfort-min" type="number" min="-5" max="40" step="1" />
+              </label>
+              <label>
+                Weather comfort max (°C)
+                <input id="wx-comfort-max" type="number" min="-5" max="45" step="1" />
+              </label>
+            </div>
+            <div class="row row-2">
+              <label>
+                Weekend crowd multiplier
+                <input id="ctx-weekend-mult" type="number" min="0" max="3" step="0.05" />
+              </label>
+              <label>
+                Parking risk weight
+                <input id="ctx-parking-weight" type="number" min="0" max="2" step="0.05" />
+              </label>
+            </div>
+            <label>
+              Raw settings_overrides JSON (advanced)
+              <textarea id="overrides-json" rows="10" placeholder='{"ingestion": {"tdx": {"city": "Taipei"}}}'></textarea>
+            </label>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <button id="submit" type="submit" class="btn btn-primary">Recommend</button>
+  </form>
+</section>
+{% endblock %}

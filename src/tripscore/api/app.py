@@ -55,40 +55,64 @@ STATIC_DIR = BASE_DIR / "web" / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+def _template_context(request: Request, *, page: str, title: str) -> dict:
+    api_base = os.getenv("TRIPSCORE_UI_API_BASE", "").strip()
+    api_base = api_base.rstrip("/") if api_base else ""
+    return {"request": request, "page": page, "title": title, "api_base": api_base}
+
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    return RedirectResponse(url="/briefing", status_code=307)
+    return RedirectResponse(url="/home", status_code=307)
+
+
+@app.get("/home", response_class=HTMLResponse)
+def home(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("home.html", _template_context(request, page="home", title="TripScore — Home"))
 
 
 @app.get("/briefing", response_class=HTMLResponse)
 def briefing(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "page": "briefing"})
+    return templates.TemplateResponse(
+        "briefing.html", _template_context(request, page="briefing", title="TripScore — Briefing")
+    )
 
 
 @app.get("/plan", response_class=HTMLResponse)
 def plan(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "page": "plan"})
+    return templates.TemplateResponse("plan.html", _template_context(request, page="plan", title="TripScore — Plan"))
 
 
 @app.get("/results", response_class=HTMLResponse)
 def results(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "page": "results"})
+    return templates.TemplateResponse(
+        "results.html", _template_context(request, page="results", title="TripScore — Results")
+    )
+
+@app.get("/search", response_class=HTMLResponse)
+def search(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        "search.html", _template_context(request, page="search", title="TripScore — Search")
+    )
 
 
 @app.get("/map", response_class=HTMLResponse)
 def map_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "page": "map"})
+    return templates.TemplateResponse("map.html", _template_context(request, page="map", title="TripScore — Map"))
 
 
 @app.get("/data", response_class=HTMLResponse)
 def data_status(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "page": "data"})
+    return templates.TemplateResponse(
+        "data.html", _template_context(request, page="data", title="TripScore — Data status")
+    )
 
 
 @app.get("/methods", response_class=HTMLResponse)
 def methods(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request, "page": "methods"})
+    return templates.TemplateResponse(
+        "methods.html", _template_context(request, page="methods", title="TripScore — Methods")
+    )
 
 
 @app.get("/{path:path}", response_class=HTMLResponse, include_in_schema=False)

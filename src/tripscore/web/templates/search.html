@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<div class="layout-search">
+  <section class="panel panel-scene">
+    <div class="panel-header">
+      <h2>Search</h2>
+      <div class="panel-header-actions">
+        <a class="btn btn-small" href="/plan" title="Go to Plan to run recommendations">Plan</a>
+        <a class="btn btn-small" href="/results" title="Open last results (if available)">Results</a>
+      </div>
+    </div>
+    {{ page_intro("Browse POIs, then send one into your planning scenario.", "/plan", "Open Plan", "/data", "Data status") }}
+    <div id="search-map"></div>
+    <p class="hint">Browse POIs from the local catalog. Click a marker to inspect details.</p>
+  </section>
+
+  <section class="panel panel-controls">
+    <div class="panel-header">
+      <h2>POI filters</h2>
+      <div class="panel-header-actions">
+        <button id="search-clear-btn" type="button" class="btn btn-small">Clear</button>
+      </div>
+    </div>
+
+    <div class="row row-2">
+      <label>
+        Name / keyword
+        <input id="poi-q" type="text" placeholder="e.g., museum, park, night market…" />
+      </label>
+      <label>
+        Tag filter (comma-separated)
+        <input id="poi-tags" type="text" placeholder="e.g., indoor, culture" list="catalog-tags" />
+      </label>
+    </div>
+
+    <div id="search-chips" class="chips"></div>
+    <div id="search-recents" class="recents"></div>
+
+    <div class="row row-2">
+      <label>
+        City
+        <input id="poi-city" type="text" placeholder="e.g., Taipei" list="catalog-locations" />
+      </label>
+      <label>
+        District (optional)
+        <input id="poi-district" type="text" placeholder="e.g., Zhongzheng" />
+      </label>
+    </div>
+
+    <div class="panel-subheader">
+      <div id="poi-count" class="muted-inline">Loading…</div>
+      <label class="inline-field">
+        Max shown
+        <select id="poi-limit">
+          <option value="100">100</option>
+          <option value="250">250</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1000</option>
+        </select>
+      </label>
+    </div>
+
+    <ol id="poi-list" class="result-list"></ol>
+
+    <div class="panel-callout" style="margin-top: 12px">
+      <div class="callout-body">
+        <div class="muted" style="margin-bottom: 8px">Selected POI</div>
+        <div id="poi-details" class="inspector">
+          <p class="hint">Select a marker or list row.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-callout" style="margin-top: 12px">
+      <div class="callout-body">
+        <div class="muted" style="margin-bottom: 8px">Compare (up to 3 POIs)</div>
+        <div id="poi-compare" class="compare-panel">
+          <p class="hint">Add POIs to compare from the list or marker detail.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

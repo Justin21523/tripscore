@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page page-home">
+  <div class="home-hero">
+    <div class="home-kicker">TripScore</div>
+    <h2 class="home-title">A narrative, evidence-based trip planning brief.</h2>
+    <p class="home-lead">
+      Move from question → scenario → recommendation → evidence, with transparent scoring and clear limitations.
+    </p>
+    <div class="home-cta">
+      <a class="btn btn-primary" href="/plan">Start a scenario</a>
+      <a class="btn" href="/search">Browse POIs</a>
+      <a class="btn" href="/data">Data status</a>
+    </div>
+  </div>
+
+  <div class="module-grid">
+    <a class="module-card" href="/plan">
+      <div class="module-title">1) Plan</div>
+      <div class="module-meta">Define time, origin, city context, and priorities. Run the model.</div>
+      <div class="module-foot">Primary action</div>
+    </a>
+    <a class="module-card" href="/results">
+      <div class="module-title">2) Results</div>
+      <div class="module-meta">Read a concise decision brief: why, risk, confidence, compare.</div>
+      <div class="module-foot">Decision brief</div>
+    </a>
+    <a class="module-card" href="/map">
+      <div class="module-title">3) Evidence</div>
+      <div class="module-meta">Verify the spatial context. Toggle bus/bike/metro/parking layers.</div>
+      <div class="module-foot">Evidence layers</div>
+    </a>
+    <a class="module-card" href="/search">
+      <div class="module-title">Explore POIs</div>
+      <div class="module-meta">Search and filter catalog POIs; send one into Plan as a seed.</div>
+      <div class="module-foot">Catalog browser</div>
+    </a>
+    <a class="module-card" href="/data">
+      <div class="module-title">Data status</div>
+      <div class="module-meta">See coverage, freshness, cooldown, and what is unsupported vs missing.</div>
+      <div class="module-foot">Quality dashboard</div>
+    </a>
+    <a class="module-card" href="/methods">
+      <div class="module-title">Methods</div>
+      <div class="module-meta">Understand scoring, assumptions, and conservative fallbacks.</div>
+      <div class="module-foot">Transparency</div>
+    </a>
+  </div>
+
+  <details class="panel-callout" open style="margin-top: 12px">
+    <summary>How to use</summary>
+    <div class="callout-body">
+      <ol class="howto-steps">
+        <li><strong>Start a scenario</strong> on Plan (time, origin, city context).</li>
+        <li><strong>Run</strong> to generate a ranked list with an explanation.</li>
+        <li><strong>Read</strong> Results as a brief (why, risk, confidence).</li>
+        <li><strong>Verify</strong> on Map using evidence layers.</li>
+        <li><strong>Check</strong> Data status when signals are degraded.</li>
+      </ol>
+    </div>
+  </details>
+</section>
+{% endblock %}
+

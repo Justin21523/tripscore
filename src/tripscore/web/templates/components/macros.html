@@ -1,0 +1,17 @@
+{% macro page_intro(purpose_meta, primary_href, primary_text, secondary_href=None, secondary_text=None) -%}
+  <div class="page-intro">
+    <div>
+      <div class="page-purpose">Purpose</div>
+      <div class="page-purpose-meta">{{ purpose_meta }}</div>
+    </div>
+    <div class="page-ctas">
+      {% if primary_href and primary_text %}
+        <a class="btn btn-primary btn-small" href="{{ primary_href }}">{{ primary_text }}</a>
+      {% endif %}
+      {% if secondary_href and secondary_text %}
+        <a class="btn btn-small" href="{{ secondary_href }}">{{ secondary_text }}</a>
+      {% endif %}
+    </div>
+  </div>
+{%- endmacro %}
+

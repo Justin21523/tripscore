@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<div class="layout-map">
+  <section class="panel panel-scene">
+    <div class="panel-header">
+      <h2>Map</h2>
+      <div class="panel-header-actions">
+        <a id="back-results-link" class="btn btn-small" href="/results">Back to results</a>
+        <a class="btn btn-small" href="/search">Search POIs</a>
+        <button id="fit-btn" type="button" class="btn btn-small" title="Fit map to visible results">Fit</button>
+        <button id="fit-selected-btn" type="button" class="btn btn-small" title="Fit map to selected result">
+          Fit selected
+        </button>
+        <button id="prev-btn" type="button" class="btn btn-small" title="Previous result (P)">Prev</button>
+        <button id="next-btn" type="button" class="btn btn-small" title="Next result (N)">Next</button>
+        <button id="export-btn" type="button" class="btn btn-small" title="Download a JSON report (share/export)">
+          Export
+        </button>
+        <label class="toggle" title="Show lines from origin">
+          <input id="show-lines" type="checkbox" />
+          Lines
+        </label>
+        <label class="toggle" title="Density mode for bus/bike layers">
+          <input id="layer-density" type="checkbox" />
+          Density
+        </label>
+        <label class="toggle" title="Bus stops (bulk, offline cache)">
+          <input id="layer-bus" type="checkbox" />
+          Bus
+        </label>
+        <label class="toggle" title="Bike stations (bulk, offline cache)">
+          <input id="layer-bike" type="checkbox" />
+          Bike
+        </label>
+        <label class="toggle" title="Metro stations (bulk, offline cache)">
+          <input id="layer-metro" type="checkbox" />
+          Metro
+        </label>
+        <label class="toggle" title="Parking lots (bulk, offline cache)">
+          <input id="layer-parking" type="checkbox" />
+          Parking
+        </label>
+      </div>
+    </div>
+    {{ page_intro("Inspect evidence layers (bulk cached) and verify the spatial context of top recommendations.", "/results", "Open Results", "/data", "Data status") }}
+    <div id="map"></div>
+    <p class="hint">Map tiles require internet access. Drag the origin marker. Use layers as evidence.</p>
+  </section>
+
+  <section class="panel panel-inspector">
+    <div class="panel-header">
+      <h2>Details</h2>
+      <div class="panel-header-actions">
+        <button id="copy-selected-btn" type="button" class="btn btn-small">Copy selected</button>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Results panel">
+      <button id="tab-results" class="tab active" type="button" role="tab" aria-selected="true">List</button>
+      <button id="tab-details" class="tab" type="button" role="tab" aria-selected="false">Brief</button>
+      <button id="tab-compare" class="tab" type="button" role="tab" aria-selected="false">Compare</button>
+    </div>
+
+    <div id="panel-results" class="tab-panel active" role="tabpanel" aria-labelledby="tab-results">
+      <div class="panel-subheader">
+        <div id="result-count" class="muted-inline"></div>
+      </div>
+      <ol id="results" class="result-list"></ol>
+    </div>
+
+    <div id="panel-details" class="tab-panel" role="tabpanel" aria-labelledby="tab-details">
+      <div id="inspector" class="inspector">
+        <p class="hint">Select a result (or map marker) to inspect its score breakdown.</p>
+      </div>
+    </div>
+
+    <div id="panel-compare" class="tab-panel" role="tabpanel" aria-labelledby="tab-compare">
+      <div id="compare-panel" class="compare-panel">
+        <p class="hint">Select up to 3 results to compare (checkbox in the list).</p>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

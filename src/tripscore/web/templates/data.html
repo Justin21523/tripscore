@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "components/macros.html" import page_intro %}
+{% block content %}
+<section class="page page-data">
+  <div class="page-header">
+    <h2>Data status</h2>
+    <p class="muted">Purpose: understand coverage/freshness and decide what to do when data is missing or rate-limited.</p>
+  </div>
+  {{ page_intro("Make data limitations explicit (unsupported vs missing vs rate-limited), and decide the next action.", "/plan", "Open Plan", "/results", "Open Results") }}
+  <div class="panel-subheader">
+    <label class="inline-field">
+      Filter by city
+      <select id="data-city-filter">
+        <option value="" selected>All</option>
+      </select>
+    </label>
+    <div id="data-cell-detail" class="muted-inline"></div>
+  </div>
+  <div class="kpi-grid" id="data-kpis"></div>
+  <div class="data-grid">
+    <div class="data-card">
+      <div class="data-title">Recommended actions</div>
+      <div id="data-actions" class="muted">Loading…</div>
+      <details class="panel-callout" style="margin-top: 10px">
+        <summary>Why a dataset is missing</summary>
+        <div class="callout-body">
+          <ul class="howto-steps">
+            <li><strong>unsupported</strong>: TDX does not provide this dataset for the city; we stop retrying.</li>
+            <li><strong>missing</strong>: not fetched yet (daemon still running) or cache not written.</li>
+            <li><strong>err 429</strong>: rate limited; wait for cooldown and prefer bulk cached layers.</li>
+          </ul>
+        </div>
+      </details>
+      <div style="margin-top: 10px">
+        <button id="copy-diagnostics-btn" type="button" class="btn btn-small">Copy diagnostics</button>
+      </div>
+    </div>
+    <div class="data-card">
+      <div class="data-title">Daemon metrics</div>
+      <div id="data-daemon" class="muted">Loading…</div>
+    </div>
+  </div>
+  <div class="data-grid">
+    <div class="data-card">
+      <div class="data-title">Coverage matrix</div>
+      <div id="data-coverage-matrix" class="coverage-table"></div>
+    </div>
+    <div class="data-card">
+      <div class="data-title">Raw overview</div>
+      <pre id="data-overview" class="debug-pre">{}</pre>
+    </div>
+  </div>
+</section>
+{% endblock %}
