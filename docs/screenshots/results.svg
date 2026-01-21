@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f3f4f2"/>
+      <stop offset="1" stop-color="#fbfbf9"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg)"/>
+  <rect x="40" y="40" width="1120" height="64" rx="16" fill="#ffffff" opacity="0.78" stroke="#0f172a" stroke-opacity="0.12"/>
+  <text x="72" y="82" font-family="ui-serif, Georgia" font-size="22" fill="#0f172a" font-weight="700">TripScore</text>
+  <text x="210" y="82" font-family="ui-sans-serif, system-ui" font-size="14" fill="#475569">Results — decision brief</text>
+
+  <rect x="40" y="128" width="1120" height="544" rx="18" fill="#ffffff" opacity="0.86" stroke="#0f172a" stroke-opacity="0.12"/>
+  <rect x="72" y="160" width="1056" height="168" rx="18" fill="#0b1220" opacity="0.88"/>
+  <text x="96" y="204" font-family="ui-sans-serif, system-ui" font-size="12" fill="#e6edf7" opacity="0.8" font-weight="800">EXECUTIVE SUMMARY</text>
+  <text x="96" y="238" font-family="ui-serif, Georgia" font-size="26" fill="#e6edf7" font-weight="800">Top recommendation</text>
+  <text x="96" y="272" font-family="ui-sans-serif, system-ui" font-size="13" fill="#b3c0d6">3 reasons · 1 risk · confidence badge</text>
+
+  <text x="72" y="370" font-family="ui-sans-serif, system-ui" font-size="12" fill="#64748b" font-weight="800">TOP N</text>
+  <rect x="72" y="392" width="1056" height="64" rx="16" fill="#fbfbf9" stroke="#0f172a" stroke-opacity="0.10"/>
+  <rect x="72" y="468" width="1056" height="64" rx="16" fill="#fbfbf9" stroke="#0f172a" stroke-opacity="0.10"/>
+  <rect x="72" y="544" width="1056" height="64" rx="16" fill="#fbfbf9" stroke="#0f172a" stroke-opacity="0.10"/>
+  <text x="96" y="432" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">#1 · Name · Score · Why (2) · Risk (1)</text>
+  <text x="96" y="508" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">#2 · Name · Score · Why (2) · Risk (1)</text>
+  <text x="96" y="584" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">#3 · Name · Score · Why (2) · Risk (1)</text>
+
+  <text x="40" y="708" font-family="ui-monospace, monospace" font-size="12" fill="#64748b">Placeholder illustration — replace with real screenshots if desired.</text>
+</svg>
+

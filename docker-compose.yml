@@ -10,6 +10,8 @@ services:
     environment:
       - TRIPSCORE_CACHE_DIR=/app/.cache/tripscore
       - TRIPSCORE_LOG_LEVEL=INFO
+      # Allow local frontends (e.g. http://localhost:8003) during development.
+      - TRIPSCORE_CORS_ALLOW_LOCAL=1
     volumes:
       - ./.cache/tripscore:/app/.cache/tripscore
       - ./data:/app/data

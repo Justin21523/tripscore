@@ -79,7 +79,39 @@ PYTHONPATH=src python -m tripscore.cli recommend \
 PYTHONPATH=src uvicorn tripscore.api.app:app --reload --port 8000 --env-file .env
 ```
 
-Then open `http://127.0.0.1:8000/`.
+Then open `http://127.0.0.1:8000/` (redirects to `/home`).
+
+### Web UI pages (narrative briefing style)
+
+- `/home` — entry overview + next suggested action
+- `/briefing` — what TripScore is, methods + limits
+- `/plan` — guided scenario inputs (time, origin, priorities) + run
+- `/results` — decision brief + compare
+- `/map` — evidence layers (bus/bike/metro/parking) + inspector
+- `/search` — POI catalog search + seed into Plan
+- `/data` — coverage/freshness + daemon status + copy diagnostics
+- `/methods` — scoring + assumptions
+
+Screenshots (illustrative placeholders; replace with real captures if desired):
+
+![Home](/docs/screenshots/home.svg)
+![Plan](/docs/screenshots/plan.svg)
+![Results](/docs/screenshots/results.svg)
+![Evidence Map](/docs/screenshots/map.svg)
+![Data status](/docs/screenshots/data.svg)
+
+### Diagnostics / observability
+
+- `POST /api/recommendations` includes `meta.debug` (`request_id`, `api_ms`) and `meta.timings_ms`.
+- UI has **Copy diagnostics** (top-right) which copies a JSON payload including run state, last error, and quality/daemon info.
+- Health check: `GET /api/health` returns `capabilities` used by the UI for compatibility.
+
+### Using a separate frontend origin (CORS / API base)
+
+If your UI is served from another origin/port, configure both:
+
+- API CORS (server): `TRIPSCORE_CORS_ORIGINS="http://localhost:8003,http://127.0.0.1:8003"` (or use the default localhost regex).
+- UI API base (server-rendered pages): `TRIPSCORE_UI_API_BASE="http://localhost:8000"` (or the correct port).
 
 ## Docker (always-on ingestion)
 
@@ -171,7 +203,26 @@ rm -rf .cache/tripscore/tdx_daemon
 The API accepts optional `settings_overrides` on the request body to override config for a single recommendation run.
 - Web UI: “Advanced Tuning (per request)” and “Expert” panels.
 - Allowed keys (server-validated): `features.*`, `scoring.*`, `ingestion.tdx.accessibility.*`, and selected `ingestion.weather.*` scoring knobs.
+- `ingestion.tdx.city` can be supported on newer servers; the UI detects support via `GET /api/health` and will fall back safely when unsupported.
 - Defaults for the UI: `GET /api/settings` (secrets are redacted).
+
+## Troubleshooting
+
+### `VALIDATION_ERROR: settings_overrides contains a disallowed key: 'ingestion.tdx.city'`
+
+This means your UI is talking to an older TripScore API process that does not allow the `ingestion.tdx.city` override.
+
+Fix:
+
+- Restart the API from this repo (recommended): `PYTHONPATH=src uvicorn tripscore.api.app:app --reload --port 8000 --env-file .env`
+- Confirm the server: `curl -s http://127.0.0.1:8000/api/health | jq .`
+
+The UI will automatically retry without that key, but city context will not apply until the server supports it.
+
+### Repeated `400` on `/api/recommendations`
+
+- Disable Auto-run (it will spam requests after invalid inputs).
+- Click **Copy diagnostics** and inspect `run_state.last_error` for the server-provided `detail`.
 
 ## Configuration
 - Update `src/tripscore/config/defaults.yaml` to tune weights, radii, and scoring thresholds.

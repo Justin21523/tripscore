@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f3f4f2"/>
+      <stop offset="1" stop-color="#fbfbf9"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg)"/>
+  <rect x="40" y="40" width="1120" height="64" rx="16" fill="#ffffff" opacity="0.78" stroke="#0f172a" stroke-opacity="0.12"/>
+  <text x="72" y="82" font-family="ui-serif, Georgia" font-size="22" fill="#0f172a" font-weight="700">TripScore</text>
+  <text x="210" y="82" font-family="ui-sans-serif, system-ui" font-size="14" fill="#475569">Data status — coverage & freshness</text>
+
+  <rect x="40" y="128" width="1120" height="544" rx="18" fill="#ffffff" opacity="0.86" stroke="#0f172a" stroke-opacity="0.12"/>
+  <text x="72" y="172" font-family="ui-sans-serif, system-ui" font-size="12" fill="#64748b" font-weight="800">COVERAGE MATRIX</text>
+  <rect x="72" y="192" width="1056" height="300" rx="16" fill="#fbfbf9" stroke="#0f172a" stroke-opacity="0.10"/>
+
+  <!-- Simple matrix cells -->
+  <g opacity="0.9">
+    <rect x="92" y="222" width="120" height="40" rx="10" fill="#0f7a53" opacity="0.14" stroke="#0f7a53" stroke-opacity="0.25"/>
+    <rect x="222" y="222" width="120" height="40" rx="10" fill="#9a6a1c" opacity="0.14" stroke="#9a6a1c" stroke-opacity="0.25"/>
+    <rect x="352" y="222" width="120" height="40" rx="10" fill="#b4233b" opacity="0.10" stroke="#b4233b" stroke-opacity="0.22"/>
+    <rect x="482" y="222" width="120" height="40" rx="10" fill="#0f172a" opacity="0.04" stroke="#0f172a" stroke-opacity="0.10"/>
+  </g>
+  <text x="98" y="248" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">done</text>
+  <text x="228" y="248" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">missing</text>
+  <text x="358" y="248" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">429</text>
+  <text x="488" y="248" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">unsupported</text>
+
+  <text x="72" y="532" font-family="ui-sans-serif, system-ui" font-size="12" fill="#64748b" font-weight="800">ACTIONS</text>
+  <rect x="72" y="552" width="680" height="92" rx="16" fill="#fbfbf9" stroke="#0f172a" stroke-opacity="0.10"/>
+  <text x="92" y="590" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">Suggested actions: wait cooldown · reduce realtime · check missing vs unsupported</text>
+
+  <rect x="780" y="552" width="348" height="92" rx="16" fill="#fbfbf9" stroke="#0f172a" stroke-opacity="0.10"/>
+  <text x="800" y="590" font-family="ui-sans-serif, system-ui" font-size="12" fill="#475569">Copy diagnostics</text>
+
+  <text x="40" y="708" font-family="ui-monospace, monospace" font-size="12" fill="#64748b">Placeholder illustration — replace with real screenshots if desired.</text>
+</svg>
+
