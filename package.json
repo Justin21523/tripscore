@@ -1,0 +1,12 @@
+{
+  "name": "tripscore",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "demo:dev": "npm --prefix demo-app run dev",
+    "demo:build": "npm --prefix demo-app run build",
+    "demo:preview": "npm --prefix demo-app run preview",
+    "dev": "npm --prefix demo-app run dev",
+    "build": "npm --prefix demo-app run build"
+  }
+}
